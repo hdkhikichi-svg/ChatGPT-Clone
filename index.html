@@ -62,6 +62,9 @@ let frame = 0;
 let nextObsIn = 80;
 let groundOff = 0;
 let bgOff = 0;
+let currentLevel = 0;
+let levelUpTimer = 0;
+let doubleNext = false;
 const obstacles = [], clouds = [], puffs = [];
 
 // ─── Cat ───────────────────────────────────────────────────────────────────────
@@ -169,8 +172,13 @@ const DOG_SIZES = [
     { ps: 4, w: 48, h: 48 },
 ];
 class Obstacle {
-    constructor() {
-        const s = DOG_SIZES[Math.floor(Math.random() * DOG_SIZES.length)];
+    constructor(sizeIdx) {
+        const lvl = getLevel();
+        // Higher level = higher chance of big dog
+        if (sizeIdx === undefined) {
+            sizeIdx = Math.random() < Math.min(lvl * 0.12, 0.55) ? 1 : 0;
+        }
+        const s = DOG_SIZES[sizeIdx];
         this.ps = s.ps; this.w = s.w; this.h = s.h;
         this.x = W + 20; this.y = GROUND_Y - this.h;
         this.af = 0; this.afTimer = 0;
@@ -178,7 +186,9 @@ class Obstacle {
     update() {
         this.x -= speed;
         this.afTimer++;
-        if (this.afTimer >= 9) { this.af = (this.af + 1) % 2; this.afTimer = 0; }
+        // Faster leg animation at higher speeds
+        const rate = Math.max(9 - Math.floor(speed / 3), 4);
+        if (this.afTimer >= rate) { this.af = (this.af + 1) % 2; this.afTimer = 0; }
     }
     draw() { drawPixelDog(this.x, this.y, this.ps, this.af); }
     hitbox() {
@@ -240,12 +250,29 @@ class Puff {
 function collides(a, b) {
     return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
 }
+
+function getLevel() { return Math.min(Math.floor(score / 200), 9); }
+
 function spawnObstacle() {
     nextObsIn--;
     if (nextObsIn <= 0) {
+        const lvl = getLevel();
         obstacles.push(new Obstacle());
-        const gap = Math.max(100 - Math.floor(score/80)*6, 30);
-        nextObsIn = gap + Math.floor(Math.random() * 60);
+
+        if (doubleNext) {
+            // Second dog of a pair: very short gap
+            nextObsIn = 18 + Math.floor(Math.random() * 10);
+            doubleNext = false;
+        } else {
+            // Normal gap, shrinks with level
+            const minGap = Math.max(88 - lvl * 7, 24);
+            const extra   = Math.max(55 - lvl * 4, 14);
+            nextObsIn = minGap + Math.floor(Math.random() * extra);
+            // Double-dog chance starts at level 3
+            if (lvl >= 3 && Math.random() < (lvl - 2) * 0.07) {
+                doubleNext = true;
+            }
+        }
     }
 }
 function spawnCloud() {
@@ -329,14 +356,34 @@ function drawHUD() {
     ctx.fillStyle = '#FFD700';
     ctx.fillText(String(Math.floor(score)).padStart(5,'0'),  W-15, 49);
 
-    // Speed stars
-    const stars = Math.min(Math.floor(score/200), 5);
+    // Level display
+    const lvl = getLevel();
     ctx.textAlign = 'left';
     ctx.font = `10px ${font}`;
     ctx.fillStyle = '#000';
-    ctx.fillText('*'.repeat(stars) + '-'.repeat(5-stars), 13, 27);
+    ctx.fillText(`LV.${lvl + 1}`, 13, 27);
     ctx.fillStyle = '#FCBA03';
-    ctx.fillText('*'.repeat(stars) + '-'.repeat(5-stars), 12, 26);
+    ctx.fillText(`LV.${lvl + 1}`, 12, 26);
+
+    // Speed bar (5 dots)
+    const filled = Math.min(Math.ceil(lvl / 2), 5);
+    ctx.font = `8px ${font}`;
+    ctx.fillStyle = '#000'; ctx.fillText('*'.repeat(filled) + '-'.repeat(5-filled), 13, 43);
+    ctx.fillStyle = lvl >= 7 ? '#FF4444' : lvl >= 4 ? '#FF8C00' : '#44CC44';
+    ctx.fillText('*'.repeat(filled) + '-'.repeat(5-filled), 12, 42);
+
+    // Level-up flash
+    if (levelUpTimer > 0) {
+        const alpha = levelUpTimer > 80 ? 1 : levelUpTimer / 80;
+        ctx.globalAlpha = alpha;
+        ctx.textAlign = 'center';
+        ctx.font = `14px ${font}`;
+        ctx.fillStyle = '#000';
+        ctx.fillText(`LEVEL ${lvl}!`, W/2 + 2, 42);
+        ctx.fillStyle = '#FFD700';
+        ctx.fillText(`LEVEL ${lvl}!`, W/2, 40);
+        ctx.globalAlpha = 1;
+    }
 }
 
 // ─── Overlay screens ───────────────────────────────────────────────────────────
@@ -382,6 +429,7 @@ function drawDeadScreen() {
 // ─── Reset ─────────────────────────────────────────────────────────────────────
 function reset() {
     score = 0; speed = 5; frame = 0; nextObsIn = 80;
+    currentLevel = 0; levelUpTimer = 0; doubleNext = false;
     obstacles.length = 0; puffs.length = 0;
     cat.y = GROUND_Y - cat.h; cat.vy = 0;
     cat.onGround = true; cat.jumps = 0; cat.animFrame = 0; cat.animTimer = 0;
@@ -399,7 +447,16 @@ function update() {
     }
     frame++;
     score += 0.12;
-    speed = Math.min(5 + Math.floor(score/100) * 0.6, 16);
+    // Smooth, continuous speed increase (5 → 15 over ~2500 points)
+    speed = Math.min(5 + score * 0.004, 15);
+
+    // Level-up detection
+    const lvl = getLevel();
+    if (lvl > currentLevel) {
+        currentLevel = lvl;
+        levelUpTimer = 100;
+    }
+    if (levelUpTimer > 0) levelUpTimer--;
     cat.update();
     spawnObstacle(); spawnCloud();
     for (let i = obstacles.length-1; i >= 0; i--) {
