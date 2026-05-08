@@ -1,75 +1,64 @@
 <!DOCTYPE html>
-<html lang="ja"><!-- v3 -->
+<html lang="ja"><!-- v4 papercraft -->
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ねこ店長ランナー</title>
-    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            background: #000;
+            background: #F0E4C8;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             min-height: 100vh;
-            font-family: 'Press Start 2P', 'Courier New', monospace;
+            font-family: 'Fredoka One', cursive;
             user-select: none;
         }
-        h1 {
-            color: #FCBA03;
-            font-size: 1rem;
-            margin-bottom: 0.8rem;
-            text-shadow: 3px 3px 0 #000;
-            letter-spacing: 2px;
-        }
-        canvas {
-            border: 4px solid #FCBA03;
-            image-rendering: pixelated;
-            image-rendering: crisp-edges;
-            max-width: 100%;
-        }
-        .hint {
-            color: #555;
-            margin-top: 0.6rem;
-            font-size: 0.4rem;
-            letter-spacing: 1px;
-        }
+        h1 { color: #C86010; font-size: 1.6rem; margin-bottom: 0.6rem;
+             text-shadow: 2px 2px 0 rgba(0,0,0,0.12); letter-spacing: 1px; }
+        canvas { border-radius: 14px; border: 4px solid #C07828;
+                 box-shadow: 0 8px 28px rgba(80,40,0,0.28); max-width: 100%; }
+        .hint { color: #A08060; margin-top: 0.6rem; font-size: 0.88rem; }
     </style>
 </head>
 <body>
-    <h1>NEKO RUNNER</h1>
+    <h1>🐱 ネコランナー</h1>
     <canvas id="game" width="800" height="300"></canvas>
-    <p class="hint">SPACE / TAP = JUMP &nbsp;|&nbsp; 2x JUMP OK</p>
+    <p class="hint">スペース / ↑ / タップ でジャンプ（2段ジャンプあり）</p>
 
 <script>
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-ctx.imageSmoothingEnabled = false;
-
 const W = canvas.width, H = canvas.height;
 const GROUND_H = 52;
 const GROUND_Y = H - GROUND_H;
-const GP = 4; // ground pixel unit
+
+// roundRect polyfill
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r) {
+        const rad = typeof r==='number' ? [r,r,r,r] : (r.length===4 ? r : [r[0],r[0],r[0],r[0]]);
+        const [tl,tr,br,bl] = rad;
+        this.moveTo(x+tl,y); this.lineTo(x+w-tr,y);
+        this.arcTo(x+w,y,x+w,y+tr,tr); this.lineTo(x+w,y+h-br);
+        this.arcTo(x+w,y+h,x+w-br,y+h,br); this.lineTo(x+bl,y+h);
+        this.arcTo(x,y+h,x,y+h-bl,bl); this.lineTo(x,y+tl);
+        this.arcTo(x,y,x+tl,y,tl); this.closePath();
+    };
+}
 
 // ─── State ─────────────────────────────────────────────────────────────────────
-let state = 'start';
-let score = 0;
+let state = 'start', score = 0;
 let hiScore = parseInt(localStorage.getItem('neko_hi') || '0');
-let speed = 5;
-let frame = 0;
-let nextObsIn = 80;
-let groundOff = 0;
-let bgOff = 0;
-let currentLevel = 0;
-let levelUpTimer = 0;
-let doubleNext = false;
+let speed = 5, frame = 0, nextObsIn = 80, bgOff = 0;
+let currentLevel = 0, levelUpTimer = 0, doubleNext = false;
 const obstacles = [], clouds = [], puffs = [];
 
 // ─── Cat ───────────────────────────────────────────────────────────────────────
 const cat = {
-    x: 80, y: GROUND_Y - 72, w: 56, h: 72,
+    x: 80, y: GROUND_Y - 74, w: 54, h: 74,
     vy: 0, onGround: true, jumps: 0, animFrame: 0, animTimer: 0,
     jump() { if (this.jumps < 2) { this.vy = -13.5; this.onGround = false; this.jumps++; } },
     update() {
@@ -77,430 +66,446 @@ const cat = {
         const floor = GROUND_Y - this.h;
         if (this.y >= floor) { this.y = floor; this.vy = 0; this.onGround = true; this.jumps = 0; }
         this.animTimer++;
-        if (this.animTimer >= (this.onGround ? 7 : 25)) { this.animFrame = (this.animFrame + 1) % 4; this.animTimer = 0; }
+        if (this.animTimer >= (this.onGround ? 7 : 25)) { this.animFrame = (this.animFrame+1)%4; this.animTimer = 0; }
     },
-    hitbox() { return { x: this.x + 10, y: this.y + 6, w: this.w - 18, h: this.h - 8 }; }
+    hitbox() { return { x: this.x+10, y: this.y+6, w: this.w-20, h: this.h-8 }; }
 };
 
-// ─── ねこ店長 pixel art ────────────────────────────────────────────────────────
-const PS = 4;
-const NPAL = {
-    '.': null, 'B': '#1A1A1A', 'O': '#F4932A', 'C': '#FFCF6E',
-    'W': '#FFFFFF', 'L': '#BDDFF7', 'K': '#FF9BB0', 'Y': '#FFD700', 'S': '#CC7010',
-};
-const NEKO_BODY = [
-    '..BOOOOOOB....', '.BCCCCCCCB....', 'BCSCCCCSCB....', 'BCC.B.BCCB....',
-    'BCCCBBBCCB....', 'BCCCCKCCCB....', '.BCCCCCCCB....', '..BBBBBBB.....',
-    '..BLLLLLLB....', '.BLLLYYLLB....', '.BLLLYYLLB....', '.BLLLLLLLLB...',
-    '.BLLLLLLLLB...', '..BLLLLLLBOO..', '...BOOOOOBOO..',
-];
-const NEKO_LEGS = [
-    ['.BOC...BOC....', '.BOO...BOO....', '.BWW...BWW....'],
-    ['...BOC.BOC....', '...BOO.BOO....', '...BWW.BWW....'],
-];
-const DEAD_LEGS = ['BOC.....COB...', 'BWW.....WWB...', '..............'];
-const ARM_PIX = [
-    [4,11,'B'], [5,10,'B'],[5,11,'O'],[5,12,'B'],
-    [6,10,'B'],[6,11,'O'],[6,12,'O'],[6,13,'B'],
-    [7,10,'B'],[7,11,'O'],[7,12,'O'],[7,13,'B'],
-    [8,10,'B'],[8,11,'O'],[8,12,'B'], [9,10,'B'],[9,11,'B'],
-];
+// ─── Paper craft helpers ────────────────────────────────────────────────────────
+function pshape(x, y, w, h, r, fill, shadow=3) {
+    ctx.fillStyle = 'rgba(80,40,0,0.18)';
+    ctx.beginPath(); ctx.roundRect(x+shadow, y+shadow, w, h, r); ctx.fill();
+    ctx.fillStyle = '#3A1A08';
+    ctx.beginPath(); ctx.roundRect(x-1.5, y-1.5, w+3, h+3, r+1); ctx.fill();
+    ctx.fillStyle = fill;
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fill();
+}
 
-function drawNekoShocho(x, y, af, onGround, dead) {
-    const p = PS;
-    function dot(key, c, r) {
-        const col = NPAL[key];
-        if (col) { ctx.fillStyle = col; ctx.fillRect(x+c*p, y+r*p, p, p); }
+function pellipse(x, y, rx, ry, fill, shadow=2) {
+    ctx.fillStyle = 'rgba(80,40,0,0.18)';
+    ctx.beginPath(); ctx.ellipse(x+shadow, y+shadow, rx, ry, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#3A1A08';
+    ctx.beginPath(); ctx.ellipse(x, y, rx+1.5, ry+1.5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = fill;
+    ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI*2); ctx.fill();
+}
+
+// ─── Draw cat (paper craft) ─────────────────────────────────────────────────────
+function drawCat(x, y, af, onGround, dead) {
+    const step = af % 2;
+
+    // Legs
+    if (!dead) {
+        const l1x = step===0 ? x+8  : x+14;
+        const l2x = step===0 ? x+34 : x+28;
+        pshape(l1x, y+56, 12, 20, 5, '#FFCF6E', 2);
+        pshape(l2x, y+56, 12, 20, 5, '#FFCF6E', 2);
+        // Shoes
+        pellipse(l1x+6, y+76, 9, 5, '#FFFAF0', 2);
+        pellipse(l2x+6, y+76, 9, 5, '#FFFAF0', 2);
+        ctx.fillStyle = '#3A1A08'; ctx.lineWidth = 1.5;
+    } else {
+        pshape(x+2,  y+56, 12, 16, 5, '#FFCF6E', 2);
+        pshape(x+38, y+56, 12, 16, 5, '#FFCF6E', 2);
     }
-    function rows(arr, ro) { arr.forEach((row, r) => { for (let c = 0; c < row.length; c++) dot(row[c], c, r+ro); }); }
-    rows(NEKO_BODY, 0);
-    if (!dead) { const bob = af % 2; ARM_PIX.forEach(([r,c,k]) => dot(k,c,r+bob)); }
+
+    // Body (uniform)
+    pshape(x+4, y+28, 46, 32, 10, '#7ECAE0', 3);
+
+    // Badge
+    ctx.fillStyle = 'rgba(80,40,0,0.15)'; ctx.beginPath();
+    ctx.arc(x+27+2, y+42+2, 5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#3A1A08'; ctx.beginPath();
+    ctx.arc(x+27, y+42, 5.5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#FFD050'; ctx.beginPath();
+    ctx.arc(x+27, y+42, 4, 0, Math.PI*2); ctx.fill();
+
+    // Left arm
+    pshape(x-2, y+32, 10, 20, 5, '#F4932A', 2);
+
+    // Right arm (raised / thumbs up)
+    const ab = step===0 ? 0 : -3;
+    pshape(x+46, y+30+ab, 10, 20, 5, '#F4932A', 2);
+    pshape(x+44, y+22+ab, 14, 12, 6, '#FFCF6E', 2); // fist
+    pshape(x+55, y+20+ab,  8, 10, 4, '#FFCF6E', 2); // thumb
+
+    // Neck
+    pshape(x+17, y+22, 20, 8, 3, '#F4932A', 2);
+
+    // Head
+    pellipse(x+27, y+12, 26, 20, '#F4932A', 3);
+
+    // Face (lighter)
+    ctx.fillStyle = '#FFCF6E';
+    ctx.beginPath(); ctx.ellipse(x+27, y+14, 18, 14, 0, 0, Math.PI*2); ctx.fill();
+
+    // Ears
+    [[x+9, x+6, x+18, '#F4932A','#FF9BB0'], [x+45, x+48, x+36, '#F4932A','#FF9BB0']].forEach(([px,tx,ox,ec,ic]) => {
+        ctx.fillStyle = '#3A1A08';
+        ctx.beginPath(); ctx.moveTo(px,y+6); ctx.lineTo(tx,y-10); ctx.lineTo(ox,y+4); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = ec;
+        ctx.beginPath(); ctx.moveTo(px,y+5); ctx.lineTo(tx+Math.sign(tx-px)*2,y-6); ctx.lineTo(ox,y+5); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = ic;
+        ctx.beginPath(); ctx.moveTo(px+Math.sign(ox-px)*2,y+5); ctx.lineTo(tx+Math.sign(tx-px)*3,y-3); ctx.lineTo(ox+Math.sign(px-ox)*2,y+5); ctx.closePath(); ctx.fill();
+    });
+
     if (dead) {
-        ctx.strokeStyle = '#FF3333'; ctx.lineWidth = p*0.6; ctx.lineCap = 'square';
-        ctx.beginPath();
-        ctx.moveTo(x+3*p,y+2*p); ctx.lineTo(x+5*p,y+4*p);
-        ctx.moveTo(x+5*p,y+2*p); ctx.lineTo(x+3*p,y+4*p); ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(x+5.5*p,y+2*p); ctx.lineTo(x+7.5*p,y+4*p);
-        ctx.moveTo(x+7.5*p,y+2*p); ctx.lineTo(x+5.5*p,y+4*p); ctx.stroke();
-    }
-    rows(dead ? DEAD_LEGS : NEKO_LEGS[af % 2], 15);
-}
-
-// ─── Pixel dog ─────────────────────────────────────────────────────────────────
-const DPAL = {
-    '.': null, 'B': '#1A1A1A', 'R': '#A0522D',
-    'r': '#D4956A', 'W': '#F5F5F5', 'K': '#FF9BB0', 'E': '#7A3B1E',
-};
-// Dog faces LEFT (toward cat), 12 wide × 12 tall
-const DOG_BODY = [
-    '....BEEEEB..', // 0  floppy ear
-    '..BRRRERrRB.', // 1  head + ear
-    '.BrrrrrrrRB.', // 2  head
-    'BrBrrrrrrRB.', // 3  eye (col1=B)
-    'BrBBBrrrrrB.', // 4  big nose
-    'BrrrrKrrrrB.', // 5  tongue
-    '.BrrrrrrrRB.', // 6  chin
-    '..BRRRRRRB..', // 7  body
-    '..BRrrrRRB..', // 8  marking
-    '...BRRRRB...', // 9  belly
-];
-const DOG_LEGS = [
-    ['..BR...BRB..', '..BW...BWB..'],
-    ['...BRBR.B...', '...BWBW.B...'],
-];
-// Tail pixels [row, col, colorKey] - wagging
-const DOG_TAIL = [
-    [[5,10,'B'],[4,11,'R'],[3,11,'R']],
-    [[6,10,'B'],[6,11,'R'],[5,11,'R']],
-];
-
-function drawPixelDog(x, y, ps, af) {
-    function dot(key, c, r) {
-        const col = DPAL[key];
-        if (col) { ctx.fillStyle = col; ctx.fillRect(x+c*ps, y+r*ps, ps, ps); }
-    }
-    function rows(arr, ro) { arr.forEach((row, r) => { for (let c = 0; c < row.length; c++) dot(row[c], c, r+ro); }); }
-    rows(DOG_BODY, 0);
-    rows(DOG_LEGS[af % 2], 10);
-    DOG_TAIL[af % 2].forEach(([r,c,k]) => dot(k, c, r));
-}
-
-// ─── Obstacle ──────────────────────────────────────────────────────────────────
-const DOG_SIZES = [
-    { ps: 3, w: 36, h: 36 },
-    { ps: 4, w: 48, h: 48 },
-];
-class Obstacle {
-    constructor(sizeIdx) {
-        const lvl = getLevel();
-        // Higher level = higher chance of big dog
-        if (sizeIdx === undefined) {
-            sizeIdx = Math.random() < Math.min(lvl * 0.12, 0.55) ? 1 : 0;
-        }
-        const s = DOG_SIZES[sizeIdx];
-        this.ps = s.ps; this.w = s.w; this.h = s.h;
-        this.x = W + 20; this.y = GROUND_Y - this.h;
-        this.af = 0; this.afTimer = 0;
-    }
-    update() {
-        this.x -= speed;
-        this.afTimer++;
-        // Faster leg animation at higher speeds
-        const rate = Math.max(9 - Math.floor(speed / 3), 4);
-        if (this.afTimer >= rate) { this.af = (this.af + 1) % 2; this.afTimer = 0; }
-    }
-    draw() { drawPixelDog(this.x, this.y, this.ps, this.af); }
-    hitbox() {
-        const m = this.ps * 2;
-        return { x: this.x + m, y: this.y + m, w: this.w - m*2, h: this.h - m*2 };
-    }
-}
-
-// ─── Pixel Cloud ───────────────────────────────────────────────────────────────
-const CLOUD_PX = [
-    '...CCCCCC...',
-    '.CCCCCCCCCC.',
-    'CCCCCCCCCCCC',
-    '.CCCCCCCCCC.',
-    '...CCCCCC...',
-];
-class Cloud {
-    constructor(rx) {
-        this.x = rx !== undefined ? rx : W + 80;
-        this.y = 14 + Math.random() * 55;
-        this.ps = Math.random() < 0.5 ? 3 : 4;
-        this.spd = 0.4 + Math.random() * 0.5;
-    }
-    update() { this.x -= this.spd; }
-    draw() {
-        const p = this.ps;
-        CLOUD_PX.forEach((row, r) => {
-            for (let c = 0; c < row.length; c++) {
-                if (row[c] === 'C') {
-                    ctx.fillStyle = '#FCFCFC';
-                    ctx.fillRect(this.x + c*p, this.y + r*p, p, p);
-                }
-            }
+        ctx.strokeStyle = '#E03020'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+        [[x+16,y+10,x+23,y+17],[x+23,y+10,x+16,y+17],
+         [x+30,y+10,x+37,y+17],[x+37,y+10,x+30,y+17]].forEach(([x1,y1,x2,y2]) => {
+            ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+        });
+    } else {
+        // Eyes
+        ctx.fillStyle = '#3A1A08';
+        ctx.beginPath(); ctx.ellipse(x+19, y+13, 4, 4.5, 0, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(x+35, y+13, 4, 4.5, 0, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#FFF';
+        ctx.beginPath(); ctx.arc(x+21,y+11,1.5,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(x+37,y+11,1.5,0,Math.PI*2); ctx.fill();
+        // Nose
+        ctx.fillStyle = '#FF9BB0';
+        ctx.beginPath(); ctx.moveTo(x+27,y+18); ctx.lineTo(x+24,y+22); ctx.lineTo(x+30,y+22); ctx.closePath(); ctx.fill();
+        // Mouth
+        ctx.strokeStyle = '#3A1A08'; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(x+24,y+22); ctx.quadraticCurveTo(x+27,y+26,x+30,y+22); ctx.stroke();
+        // Whiskers
+        ctx.lineWidth = 1;
+        [[x+13,y+20,x+23,y+19],[x+13,y+23,x+23,y+22],
+         [x+41,y+20,x+31,y+19],[x+41,y+23,x+31,y+22]].forEach(([x1,y1,x2,y2]) => {
+            ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
         });
     }
 }
 
-// ─── Pixel Puff ────────────────────────────────────────────────────────────────
-class Puff {
-    constructor(x, y) {
-        this.x = x; this.y = y;
-        this.vx = (Math.random() - 0.5) * 6;
-        this.vy = -4 - Math.random() * 4;
-        this.size = 4 + Math.floor(Math.random() * 3) * 4;
-        this.life = 1.0;
-        this.color = ['#F4932A','#FFD700','#FF6B6B','#FCFCFC','#BDDFF7'][Math.floor(Math.random()*5)];
+// ─── Draw dog (paper craft) ─────────────────────────────────────────────────────
+function drawPaperDog(x, y, baseW, af) {
+    const s = baseW / 48;
+    const sc = v => v * s;
+
+    // Tail (wagging)
+    ctx.save();
+    ctx.translate(x + sc(44), y + sc(18));
+    ctx.rotate(af%2===0 ? -0.4 : 0.4);
+    ctx.fillStyle = 'rgba(80,40,0,0.15)';
+    ctx.beginPath(); ctx.roundRect(sc(2),sc(2),sc(10),sc(22),sc(5)); ctx.fill();
+    ctx.fillStyle = '#3A1A08';
+    ctx.beginPath(); ctx.roundRect(-sc(2),-sc(2),sc(12),sc(22),sc(6)); ctx.fill();
+    ctx.fillStyle = '#B07040';
+    ctx.beginPath(); ctx.roundRect(-sc(1),-sc(1),sc(10),sc(20),sc(5)); ctx.fill();
+    ctx.restore();
+
+    // Legs
+    const l1x = af%2===0 ? x+sc(8)  : x+sc(13);
+    const l2x = af%2===0 ? x+sc(28) : x+sc(23);
+    pshape(l1x, y+sc(32), sc(10), sc(18), sc(4), '#C4834A', sc(2));
+    pshape(l2x, y+sc(32), sc(10), sc(18), sc(4), '#C4834A', sc(2));
+    pellipse(l1x+sc(5), y+sc(52), sc(8), sc(4), '#F0D8A8', sc(2));
+    pellipse(l2x+sc(5), y+sc(52), sc(8), sc(4), '#F0D8A8', sc(2));
+
+    // Body
+    pshape(x+sc(4), y+sc(14), sc(40), sc(24), sc(9), '#C4834A', sc(3));
+
+    // Belly patch
+    ctx.fillStyle = '#E0B880';
+    ctx.beginPath(); ctx.ellipse(x+sc(22), y+sc(28), sc(12), sc(8), 0, 0, Math.PI*2); ctx.fill();
+
+    // Floppy ear
+    ctx.fillStyle = 'rgba(80,40,0,0.15)';
+    ctx.beginPath(); ctx.roundRect(x-sc(2)+sc(2),y+sc(3)+sc(2),sc(14),sc(22),[sc(6),sc(2),sc(9),sc(2)]); ctx.fill();
+    ctx.fillStyle = '#3A1A08';
+    ctx.beginPath(); ctx.roundRect(x-sc(4),y+sc(1),sc(14),sc(22),[sc(7),sc(2),sc(10),sc(2)]); ctx.fill();
+    ctx.fillStyle = '#A06030';
+    ctx.beginPath(); ctx.roundRect(x-sc(3),y+sc(2),sc(12),sc(20),[sc(6),sc(2),sc(9),sc(2)]); ctx.fill();
+
+    // Head
+    pellipse(x+sc(16), y+sc(12), sc(18), sc(16), '#D4956A', sc(3));
+
+    // Eye
+    ctx.fillStyle = '#3A1A08';
+    ctx.beginPath(); ctx.ellipse(x+sc(12),y+sc(9),sc(3.5),sc(4),0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#FFF';
+    ctx.beginPath(); ctx.arc(x+sc(13.5),y+sc(7.5),sc(1.5),0,Math.PI*2); ctx.fill();
+
+    // Nose
+    ctx.fillStyle = 'rgba(80,40,0,0.15)';
+    ctx.beginPath(); ctx.roundRect(x+sc(7)+sc(2),y+sc(15)+sc(2),sc(12),sc(7),sc(3)); ctx.fill();
+    ctx.fillStyle = '#3A1A08';
+    ctx.beginPath(); ctx.roundRect(x+sc(7),y+sc(15),sc(12),sc(7),sc(3)); ctx.fill();
+
+    // Tongue
+    ctx.fillStyle = '#FF9BB0';
+    ctx.beginPath(); ctx.roundRect(x+sc(9),y+sc(20),sc(8),sc(9),[0,0,sc(4),sc(4)]); ctx.fill();
+}
+
+// ─── Obstacle ──────────────────────────────────────────────────────────────────
+const DOG_SIZES = [
+    { w: 36, h: 42 },
+    { w: 48, h: 56 },
+];
+class Obstacle {
+    constructor(sizeIdx) {
+        const lvl = getLevel();
+        if (sizeIdx === undefined)
+            sizeIdx = Math.random() < Math.min(lvl*0.12, 0.55) ? 1 : 0;
+        const s = DOG_SIZES[sizeIdx];
+        this.w = s.w; this.h = s.h;
+        this.x = W+20; this.y = GROUND_Y - this.h;
+        this.af = 0; this.afTimer = 0;
     }
-    update() { this.x += this.vx; this.vy += 0.3; this.y += this.vy; this.life -= 0.04; }
+    update() {
+        this.x -= speed; this.afTimer++;
+        const rate = Math.max(9 - Math.floor(speed/3), 4);
+        if (this.afTimer >= rate) { this.af=(this.af+1)%2; this.afTimer=0; }
+    }
+    draw() { drawPaperDog(this.x, this.y, this.w, this.af); }
+    hitbox() { const m=6; return { x:this.x+m, y:this.y+m, w:this.w-m*2, h:this.h-m*2 }; }
+}
+
+// ─── Cloud (paper craft) ───────────────────────────────────────────────────────
+class Cloud {
+    constructor(rx) {
+        this.x = rx !== undefined ? rx : W+80;
+        this.y = 14 + Math.random()*50;
+        this.sc = 0.7 + Math.random()*0.6;
+        this.spd = 0.4 + Math.random()*0.5;
+    }
+    update() { this.x -= this.spd; }
     draw() {
-        const s = Math.max(2, Math.floor(this.size * this.life / 2) * 2);
-        ctx.globalAlpha = this.life;
+        const s = this.sc, x = this.x, y = this.y;
+        // Shadow
+        ctx.fillStyle = 'rgba(80,40,0,0.08)';
+        [[s*36,s*18],[s*20,s*12],[s*54,s*14]].forEach(([ex,ey]) => {
+            ctx.beginPath(); ctx.ellipse(x+ex+4,y+ey+4,ex,ey,0,0,Math.PI*2); ctx.fill();
+        });
+        // White puffs
+        ctx.fillStyle = '#FFFCF5';
+        [[s*36,s*18],[s*20,s*12],[s*54,s*14]].forEach(([ex,ey]) => {
+            ctx.beginPath(); ctx.ellipse(x+ex,y+ey,ex,ey,0,0,Math.PI*2); ctx.fill();
+        });
+    }
+}
+
+// ─── Puff particle ─────────────────────────────────────────────────────────────
+class Puff {
+    constructor(x,y) {
+        this.x=x; this.y=y;
+        this.vx=(Math.random()-0.5)*7;
+        this.vy=-4-Math.random()*4;
+        this.size=10+Math.random()*14;
+        this.life=1.0; this.rot=Math.random()*Math.PI*2;
+        this.color=['#F4932A','#FFD050','#FF9BB0','#FFFCF5','#7ECAE0'][Math.floor(Math.random()*5)];
+    }
+    update() { this.x+=this.vx; this.vy+=0.3; this.y+=this.vy; this.life-=0.04; this.rot+=0.12; }
+    draw() {
+        const s = this.size*this.life;
+        ctx.globalAlpha = this.life*0.85;
+        ctx.save(); ctx.translate(this.x,this.y); ctx.rotate(this.rot);
         ctx.fillStyle = this.color;
-        ctx.fillRect(Math.round(this.x - s/2), Math.round(this.y - s/2), s, s);
-        ctx.globalAlpha = 1;
+        ctx.beginPath(); ctx.roundRect(-s/2,-s/2,s,s,s*0.35); ctx.fill();
+        ctx.restore(); ctx.globalAlpha = 1;
     }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-function collides(a, b) {
-    return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
-}
-
-function getLevel() { return Math.min(Math.floor(score / 200), 9); }
+function collides(a,b) { return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
+function getLevel() { return Math.min(Math.floor(score/200),9); }
 
 function spawnObstacle() {
     nextObsIn--;
-    if (nextObsIn <= 0) {
+    if (nextObsIn<=0) {
         const lvl = getLevel();
         obstacles.push(new Obstacle());
-
         if (doubleNext) {
-            // Second dog of a pair: very short gap
-            nextObsIn = 18 + Math.floor(Math.random() * 10);
-            doubleNext = false;
+            nextObsIn = 18+Math.floor(Math.random()*10); doubleNext=false;
         } else {
-            // Normal gap, shrinks with level
-            const minGap = Math.max(88 - lvl * 7, 24);
-            const extra   = Math.max(55 - lvl * 4, 14);
-            nextObsIn = minGap + Math.floor(Math.random() * extra);
-            // Double-dog chance starts at level 3
-            if (lvl >= 3 && Math.random() < (lvl - 2) * 0.07) {
-                doubleNext = true;
-            }
+            const minGap = Math.max(88-lvl*7,24);
+            const extra  = Math.max(55-lvl*4,14);
+            nextObsIn = minGap+Math.floor(Math.random()*extra);
+            if (lvl>=3 && Math.random()<(lvl-2)*0.07) doubleNext=true;
         }
     }
 }
-function spawnCloud() {
-    if (clouds.length < 5 && Math.random() < 0.004) clouds.push(new Cloud());
-}
+function spawnCloud() { if (clouds.length<5 && Math.random()<0.004) clouds.push(new Cloud()); }
 
-// ─── Pixel box helper ──────────────────────────────────────────────────────────
-function pixelBox(x, y, w, h, bg, border) {
-    ctx.fillStyle = border;
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = bg;
-    ctx.fillRect(x+4, y+4, w-8, h-8);
-}
-
-// ─── Draw background ───────────────────────────────────────────────────────────
+// ─── Background ────────────────────────────────────────────────────────────────
 function drawBG() {
-    bgOff += speed * 0.18;
+    bgOff += speed*0.18;
 
-    // NES-style solid sky
-    ctx.fillStyle = '#5C94FC';
-    ctx.fillRect(0, 0, W, GROUND_Y);
+    // Sky
+    const sg = ctx.createLinearGradient(0,0,0,GROUND_Y);
+    sg.addColorStop(0,'#A0CCF0'); sg.addColorStop(1,'#D8EEFF');
+    ctx.fillStyle = sg; ctx.fillRect(0,0,W,GROUND_Y);
 
-    // Far background: dark tree silhouettes (slow parallax)
-    ctx.fillStyle = '#2060B0';
-    for (let tx = -(bgOff * 0.2) % 100; tx < W + 10; tx += 100) {
-        const ox = Math.round(tx);
-        ctx.fillRect(ox,      GROUND_Y - 52, 48, 28); // canopy
-        ctx.fillRect(ox + 16, GROUND_Y - 28, 16, 28); // trunk
+    // Far hills
+    ctx.fillStyle = '#C0E0A0';
+    for (let hx=-(bgOff*0.14)%220; hx<W+30; hx+=220) {
+        ctx.fillStyle = 'rgba(80,40,0,0.1)';
+        ctx.beginPath(); ctx.ellipse(hx+90+4,GROUND_Y+14,95,60,0,Math.PI,0); ctx.fill();
+        ctx.fillStyle = '#C0E0A0';
+        ctx.beginPath(); ctx.ellipse(hx+90,GROUND_Y+12,95,60,0,Math.PI,0); ctx.fill();
     }
 
-    // Mid background: bushes (medium parallax)
-    ctx.fillStyle = '#1A9A1A';
-    for (let tx = -(bgOff * 0.4) % 80; tx < W + 10; tx += 80) {
-        const ox = Math.round(tx);
-        ctx.fillRect(ox + 4,  GROUND_Y - 20, 32, 12);
-        ctx.fillRect(ox,      GROUND_Y - 12, 40, 12);
+    // Near hills
+    ctx.fillStyle = '#98CF70';
+    for (let hx=-(bgOff*0.28)%170; hx<W+20; hx+=170) {
+        ctx.fillStyle = 'rgba(80,40,0,0.1)';
+        ctx.beginPath(); ctx.ellipse(hx+65+3,GROUND_Y+10,72,42,0,Math.PI,0); ctx.fill();
+        ctx.fillStyle = '#98CF70';
+        ctx.beginPath(); ctx.ellipse(hx+65,GROUND_Y+8,72,42,0,Math.PI,0); ctx.fill();
     }
 }
 
-// ─── Draw ground (pixel tiles) ─────────────────────────────────────────────────
+// ─── Ground ────────────────────────────────────────────────────────────────────
 function drawGround() {
-    groundOff = (groundOff + speed) % (GP * 8);
-
-    // Bright grass top
-    ctx.fillStyle = '#00C800';
-    ctx.fillRect(0, GROUND_Y, W, GP);
-    ctx.fillStyle = '#00A800';
-    ctx.fillRect(0, GROUND_Y + GP, W, GP);
-    ctx.fillStyle = '#007800';
-    ctx.fillRect(0, GROUND_Y + GP*2, W, GP);
-
-    // Dirt
-    ctx.fillStyle = '#9C5020';
-    ctx.fillRect(0, GROUND_Y + GP*3, W, GROUND_H - GP*3);
-
-    // Scrolling dirt tiles
-    ctx.fillStyle = '#7A3C14';
-    for (let gx = -groundOff; gx < W; gx += GP*8) {
-        ctx.fillRect(Math.round(gx), GROUND_Y + GP*4, GP*4, GP*2);
-    }
-
-    // Scrolling grass highlights
-    ctx.fillStyle = '#44EE44';
-    for (let gx = (-groundOff*0.5 + 24) % (GP*14); gx < W; gx += GP*14) {
-        ctx.fillRect(Math.round(gx), GROUND_Y, GP*2, GP);
-    }
+    // Shadow
+    ctx.fillStyle = 'rgba(80,40,0,0.2)';
+    ctx.fillRect(0,GROUND_Y+5,W,GROUND_H);
+    // Grass
+    ctx.fillStyle = '#6DC848'; ctx.fillRect(0,GROUND_Y,W,16);
+    ctx.fillStyle = '#84E060'; ctx.fillRect(0,GROUND_Y,W,5);
+    // Dirt layers
+    ctx.fillStyle = '#C49060'; ctx.fillRect(0,GROUND_Y+16,W,GROUND_H-16);
+    ctx.fillStyle = '#A87048'; ctx.fillRect(0,GROUND_Y+24,W,5);
+    ctx.fillStyle = '#A87048'; ctx.fillRect(0,GROUND_Y+36,W,4);
+    ctx.fillStyle = '#A87048'; ctx.fillRect(0,GROUND_Y+46,W,4);
 }
 
 // ─── HUD ───────────────────────────────────────────────────────────────────────
 function drawHUD() {
-    const font = '"Press Start 2P", monospace';
-    ctx.textAlign = 'right';
-    // Shadow
-    ctx.fillStyle = '#000';
-    ctx.font = `13px ${font}`;
-    ctx.fillText('HI ' + String(hiScore).padStart(5,'0'), W-13, 29);
-    ctx.fillText(String(Math.floor(score)).padStart(5,'0'),  W-13, 51);
-    // Text
-    ctx.fillStyle = '#FCFCFC';
-    ctx.fillText('HI ' + String(hiScore).padStart(5,'0'), W-15, 27);
-    ctx.fillStyle = '#FFD700';
-    ctx.fillText(String(Math.floor(score)).padStart(5,'0'),  W-15, 49);
+    const f = "'Fredoka One', cursive";
+    ctx.textAlign='right'; ctx.font=`18px ${f}`;
+    ctx.fillStyle='rgba(80,40,0,0.2)';
+    ctx.fillText('HI '+String(hiScore).padStart(5,'0'), W-12,32);
+    ctx.fillText(String(Math.floor(score)).padStart(5,'0'),  W-12,56);
+    ctx.fillStyle='#A07040';
+    ctx.fillText('HI '+String(hiScore).padStart(5,'0'), W-14,30);
+    ctx.fillStyle='#C06010';
+    ctx.fillText(String(Math.floor(score)).padStart(5,'0'),  W-14,54);
 
-    // Level display
-    const lvl = getLevel();
-    ctx.textAlign = 'left';
-    ctx.font = `10px ${font}`;
-    ctx.fillStyle = '#000';
-    ctx.fillText(`LV.${lvl + 1}`, 13, 27);
-    ctx.fillStyle = '#FCBA03';
-    ctx.fillText(`LV.${lvl + 1}`, 12, 26);
+    const lvl=getLevel();
+    ctx.textAlign='left'; ctx.font=`16px ${f}`;
+    ctx.fillStyle='rgba(80,40,0,0.2)'; ctx.fillText(`LV.${lvl+1}`,16,30);
+    ctx.fillStyle='#C06010';             ctx.fillText(`LV.${lvl+1}`,14,28);
 
-    // Speed bar (5 dots)
-    const filled = Math.min(Math.ceil(lvl / 2), 5);
-    ctx.font = `8px ${font}`;
-    ctx.fillStyle = '#000'; ctx.fillText('*'.repeat(filled) + '-'.repeat(5-filled), 13, 43);
-    ctx.fillStyle = lvl >= 7 ? '#FF4444' : lvl >= 4 ? '#FF8C00' : '#44CC44';
-    ctx.fillText('*'.repeat(filled) + '-'.repeat(5-filled), 12, 42);
+    // Speed dots
+    const filled = Math.min(Math.ceil(lvl/2),5);
+    for (let i=0;i<5;i++) {
+        const cx=18+i*16, cy=46;
+        ctx.fillStyle='rgba(80,40,0,0.15)';
+        ctx.beginPath(); ctx.arc(cx+1,cy+1,5,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle = i<filled ? (lvl>=7?'#F05050':lvl>=4?'#F09020':'#60C040') : '#D8C8B0';
+        ctx.beginPath(); ctx.arc(cx,cy,5,0,Math.PI*2); ctx.fill();
+    }
 
-    // Level-up flash
-    if (levelUpTimer > 0) {
-        const alpha = levelUpTimer > 80 ? 1 : levelUpTimer / 80;
-        ctx.globalAlpha = alpha;
-        ctx.textAlign = 'center';
-        ctx.font = `14px ${font}`;
-        ctx.fillStyle = '#000';
-        ctx.fillText(`LEVEL ${lvl}!`, W/2 + 2, 42);
-        ctx.fillStyle = '#FFD700';
-        ctx.fillText(`LEVEL ${lvl}!`, W/2, 40);
-        ctx.globalAlpha = 1;
+    if (levelUpTimer>0) {
+        const alpha = levelUpTimer>80 ? 1 : levelUpTimer/80;
+        ctx.globalAlpha=alpha; ctx.textAlign='center'; ctx.font=`22px ${f}`;
+        ctx.fillStyle='rgba(80,40,0,0.2)'; ctx.fillText(`LEVEL ${lvl}!`,W/2+2,44);
+        ctx.fillStyle='#F0A000';           ctx.fillText(`LEVEL ${lvl}!`,W/2,42);
+        ctx.globalAlpha=1;
     }
 }
 
-// ─── Overlay screens ───────────────────────────────────────────────────────────
+// ─── Paper box ─────────────────────────────────────────────────────────────────
+function paperBox(x,y,w,h,bg,border) {
+    ctx.fillStyle='rgba(80,40,0,0.22)';
+    ctx.beginPath(); ctx.roundRect(x+5,y+5,w,h,14); ctx.fill();
+    ctx.fillStyle=border;
+    ctx.beginPath(); ctx.roundRect(x,y,w,h,13); ctx.fill();
+    ctx.fillStyle=bg;
+    ctx.beginPath(); ctx.roundRect(x+4,y+4,w-8,h-8,10); ctx.fill();
+}
+
+// ─── Screens ───────────────────────────────────────────────────────────────────
 function drawStartScreen() {
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(0, 0, W, H);
-    pixelBox(W/2-220, H/2-68, 440, 136, '#000C28', '#FCBA03');
-    const font = '"Press Start 2P", monospace';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#FCBA03';
-    ctx.font = `18px ${font}`;
-    ctx.fillText('NEKO RUNNER', W/2, H/2 - 26);
-    ctx.fillStyle = '#FCFCFC';
-    ctx.font = `8px ${font}`;
-    ctx.fillText('AVOID THE DOGS!', W/2, H/2 - 4);
-    ctx.fillStyle = '#88AACC';
-    ctx.fillText('PRESS SPACE OR TAP TO START', W/2, H/2 + 18);
-    ctx.fillText('2x JUMP AVAILABLE', W/2, H/2 + 38);
+    ctx.fillStyle='rgba(180,130,60,0.3)'; ctx.fillRect(0,0,W,H);
+    paperBox(W/2-220,H/2-68,440,136,'#FFFCF0','#D09030');
+    const f="'Fredoka One',cursive"; ctx.textAlign='center';
+    ctx.fillStyle='#C06010'; ctx.font=`26px ${f}`; ctx.fillText('🐱 ネコランナー',W/2,H/2-22);
+    ctx.fillStyle='#A08060'; ctx.font=`16px ${f}`; ctx.fillText('犬を避けろ！',W/2,H/2+4);
+    ctx.fillStyle='#C0A080'; ctx.font=`13px ${f}`;
+    ctx.fillText('スペース / タップ でスタート',W/2,H/2+28);
+    ctx.fillText('2段ジャンプあり',W/2,H/2+50);
 }
 
 function drawDeadScreen() {
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(0, 0, W, H);
-    pixelBox(W/2-200, H/2-68, 400, 136, '#200000', '#FF3333');
-    const font = '"Press Start 2P", monospace';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#FF3333';
-    ctx.font = `18px ${font}`;
-    ctx.fillText('GAME OVER', W/2, H/2 - 26);
-    ctx.fillStyle = '#FCFCFC';
-    ctx.font = `10px ${font}`;
-    ctx.fillText('SCORE ' + String(Math.floor(score)).padStart(5,'0'), W/2, H/2 - 2);
-    if (score >= hiScore && score > 0) {
-        ctx.fillStyle = '#FFD700';
-        ctx.font = `9px ${font}`;
-        ctx.fillText('NEW RECORD!', W/2, H/2 + 20);
+    ctx.fillStyle='rgba(180,60,40,0.22)'; ctx.fillRect(0,0,W,H);
+    paperBox(W/2-200,H/2-68,400,136,'#FFF8F5','#D04828');
+    const f="'Fredoka One',cursive"; ctx.textAlign='center';
+    ctx.fillStyle='#C03820'; ctx.font=`26px ${f}`; ctx.fillText('GAME OVER 😿',W/2,H/2-22);
+    ctx.fillStyle='#806050'; ctx.font=`16px ${f}`;
+    ctx.fillText('スコア：'+String(Math.floor(score)),W/2,H/2+4);
+    if (score>=hiScore && score>0) {
+        ctx.fillStyle='#C07010'; ctx.font=`14px ${f}`; ctx.fillText('🏆 新記録！',W/2,H/2+26);
     }
-    ctx.fillStyle = '#666';
-    ctx.font = `7px ${font}`;
-    ctx.fillText('PRESS SPACE OR TAP', W/2, H/2 + 42);
+    ctx.fillStyle='#B09080'; ctx.font=`13px ${f}`;
+    ctx.fillText('スペース / クリックでリトライ',W/2,H/2+50);
 }
 
 // ─── Reset ─────────────────────────────────────────────────────────────────────
 function reset() {
-    score = 0; speed = 5; frame = 0; nextObsIn = 80;
-    currentLevel = 0; levelUpTimer = 0; doubleNext = false;
-    obstacles.length = 0; puffs.length = 0;
-    cat.y = GROUND_Y - cat.h; cat.vy = 0;
-    cat.onGround = true; cat.jumps = 0; cat.animFrame = 0; cat.animTimer = 0;
-    state = 'playing';
+    score=0; speed=5; frame=0; nextObsIn=80;
+    currentLevel=0; levelUpTimer=0; doubleNext=false;
+    obstacles.length=0; puffs.length=0;
+    cat.y=GROUND_Y-cat.h; cat.vy=0;
+    cat.onGround=true; cat.jumps=0; cat.animFrame=0; cat.animTimer=0;
+    state='playing';
 }
 
 // ─── Update ────────────────────────────────────────────────────────────────────
 function update() {
-    if (state !== 'playing') {
-        for (let i = puffs.length-1; i >= 0; i--) {
-            puffs[i].update();
-            if (puffs[i].life <= 0) puffs.splice(i, 1);
-        }
+    if (state!=='playing') {
+        for (let i=puffs.length-1;i>=0;i--) { puffs[i].update(); if(puffs[i].life<=0) puffs.splice(i,1); }
         return;
     }
-    frame++;
-    score += 0.12;
-    // Smooth, continuous speed increase (5 → 15 over ~2500 points)
-    speed = Math.min(5 + score * 0.004, 15);
-
-    // Level-up detection
-    const lvl = getLevel();
-    if (lvl > currentLevel) {
-        currentLevel = lvl;
-        levelUpTimer = 100;
-    }
-    if (levelUpTimer > 0) levelUpTimer--;
-    cat.update();
-    spawnObstacle(); spawnCloud();
-    for (let i = obstacles.length-1; i >= 0; i--) {
+    frame++; score+=0.12;
+    speed = Math.min(5+score*0.004,15);
+    const lvl=getLevel();
+    if (lvl>currentLevel) { currentLevel=lvl; levelUpTimer=100; }
+    if (levelUpTimer>0) levelUpTimer--;
+    cat.update(); spawnObstacle(); spawnCloud();
+    for (let i=obstacles.length-1;i>=0;i--) {
         obstacles[i].update();
-        if (obstacles[i].x + obstacles[i].w < -20) obstacles.splice(i, 1);
+        if(obstacles[i].x+obstacles[i].w<-20) obstacles.splice(i,1);
     }
-    for (let i = clouds.length-1; i >= 0; i--) {
-        clouds[i].update();
-        if (clouds[i].x < -80) clouds.splice(i, 1);
+    for (let i=clouds.length-1;i>=0;i--) {
+        clouds[i].update(); if(clouds[i].x<-100) clouds.splice(i,1);
     }
-    const ch = cat.hitbox();
+    const ch=cat.hitbox();
     for (const obs of obstacles) {
-        if (collides(ch, obs.hitbox())) {
-            for (let p = 0; p < 20; p++) puffs.push(new Puff(cat.x + cat.w/2, cat.y + cat.h/2));
-            if (score > hiScore) { hiScore = Math.floor(score); localStorage.setItem('neko_hi', hiScore); }
-            state = 'dead'; return;
+        if (collides(ch,obs.hitbox())) {
+            for (let p=0;p<22;p++) puffs.push(new Puff(cat.x+cat.w/2,cat.y+cat.h/2));
+            if (score>hiScore) { hiScore=Math.floor(score); localStorage.setItem('neko_hi',hiScore); }
+            state='dead'; return;
         }
     }
 }
 
 // ─── Draw ──────────────────────────────────────────────────────────────────────
 function draw() {
-    ctx.clearRect(0, 0, W, H);
+    ctx.clearRect(0,0,W,H);
     drawBG();
     for (const c of clouds) c.draw();
     drawGround();
     for (const o of obstacles) o.draw();
-    drawNekoShocho(cat.x, cat.y, cat.animFrame, cat.onGround, state === 'dead');
+    drawCat(cat.x, cat.y, cat.animFrame, cat.onGround, state==='dead');
     for (const p of puffs) p.draw();
     drawHUD();
-    if (state === 'start') drawStartScreen();
-    if (state === 'dead')  drawDeadScreen();
+    if (state==='start') drawStartScreen();
+    if (state==='dead')  drawDeadScreen();
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
 
 // ─── Input ─────────────────────────────────────────────────────────────────────
-function input() { if (state === 'start' || state === 'dead') reset(); else cat.jump(); }
-document.addEventListener('keydown', e => { if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); input(); } });
+function input() { if(state==='start'||state==='dead') reset(); else cat.jump(); }
+document.addEventListener('keydown', e => { if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();input();} });
 canvas.addEventListener('click', input);
-canvas.addEventListener('touchstart', e => { e.preventDefault(); input(); }, { passive: false });
+canvas.addEventListener('touchstart', e => { e.preventDefault(); input(); }, {passive:false});
 
 // ─── Init ──────────────────────────────────────────────────────────────────────
-for (let i = 0; i < 4; i++) clouds.push(new Cloud(Math.random() * W));
+for (let i=0;i<4;i++) clouds.push(new Cloud(Math.random()*W));
 loop();
 </script>
 </body>
