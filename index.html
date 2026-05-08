@@ -3,300 +3,176 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ねこ店長ランナー 🐱</title>
+    <title>ねこ店長ランナー</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            background: #1a1a2e;
+            background: #000;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             min-height: 100vh;
-            font-family: 'Courier New', monospace;
+            font-family: 'Press Start 2P', 'Courier New', monospace;
             user-select: none;
         }
         h1 {
-            color: #FF8C42;
-            font-size: 2rem;
-            margin-bottom: 1rem;
-            letter-spacing: 4px;
-            text-shadow: 0 0 20px rgba(255, 140, 66, 0.6);
+            color: #FCBA03;
+            font-size: 1rem;
+            margin-bottom: 0.8rem;
+            text-shadow: 3px 3px 0 #000;
+            letter-spacing: 2px;
         }
         canvas {
-            border: 3px solid #FF8C42;
-            border-radius: 10px;
-            box-shadow: 0 0 40px rgba(255, 140, 66, 0.25);
-            cursor: pointer;
+            border: 4px solid #FCBA03;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
             max-width: 100%;
         }
         .hint {
-            color: #888;
-            margin-top: 0.8rem;
-            font-size: 0.85rem;
+            color: #555;
+            margin-top: 0.6rem;
+            font-size: 0.4rem;
             letter-spacing: 1px;
         }
     </style>
 </head>
 <body>
-    <h1>🐱 ねこ店長ランナー</h1>
+    <h1>NEKO RUNNER</h1>
     <canvas id="game" width="800" height="300"></canvas>
-    <p class="hint">スペース / ↑ / タップ でジャンプ（2段ジャンプあり）</p>
+    <p class="hint">SPACE / TAP = JUMP &nbsp;|&nbsp; 2x JUMP OK</p>
 
 <script>
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
 
-const W = canvas.width;
-const H = canvas.height;
-const GROUND_H = 55;
+const W = canvas.width, H = canvas.height;
+const GROUND_H = 52;
 const GROUND_Y = H - GROUND_H;
+const GP = 4; // ground pixel unit
 
-// ─── Game state ────────────────────────────────────────────────────────────────
-let state = 'start'; // 'start' | 'playing' | 'dead'
+// ─── State ─────────────────────────────────────────────────────────────────────
+let state = 'start';
 let score = 0;
 let hiScore = parseInt(localStorage.getItem('neko_hi') || '0');
 let speed = 5;
 let frame = 0;
 let nextObsIn = 80;
 let groundOff = 0;
-const obstacles = [];
-const clouds = [];
-const puffs = []; // death particle puffs
+let bgOff = 0;
+const obstacles = [], clouds = [], puffs = [];
 
 // ─── Cat ───────────────────────────────────────────────────────────────────────
 const cat = {
-    x: 80,
-    y: GROUND_Y - 72,
-    w: 56,
-    h: 72,
-    vy: 0,
-    onGround: true,
-    jumps: 0,
-    animFrame: 0,
-    animTimer: 0,
-
-    jump() {
-        if (this.jumps < 2) {
-            this.vy = -13.5;
-            this.onGround = false;
-            this.jumps++;
-        }
-    },
-
+    x: 80, y: GROUND_Y - 72, w: 56, h: 72,
+    vy: 0, onGround: true, jumps: 0, animFrame: 0, animTimer: 0,
+    jump() { if (this.jumps < 2) { this.vy = -13.5; this.onGround = false; this.jumps++; } },
     update() {
-        if (!this.onGround) {
-            this.vy += 0.72;
-            this.y += this.vy;
-        }
+        if (!this.onGround) { this.vy += 0.72; this.y += this.vy; }
         const floor = GROUND_Y - this.h;
-        if (this.y >= floor) {
-            this.y = floor;
-            this.vy = 0;
-            this.onGround = true;
-            this.jumps = 0;
-        }
+        if (this.y >= floor) { this.y = floor; this.vy = 0; this.onGround = true; this.jumps = 0; }
         this.animTimer++;
-        const rate = this.onGround ? 7 : 25;
-        if (this.animTimer >= rate) {
-            this.animFrame = (this.animFrame + 1) % 4;
-            this.animTimer = 0;
-        }
+        if (this.animTimer >= (this.onGround ? 7 : 25)) { this.animFrame = (this.animFrame + 1) % 4; this.animTimer = 0; }
     },
-
-    hitbox() {
-        return { x: this.x + 10, y: this.y + 6, w: this.w - 18, h: this.h - 8 };
-    }
+    hitbox() { return { x: this.x + 10, y: this.y + 6, w: this.w - 18, h: this.h - 8 }; }
 };
 
 // ─── ねこ店長 pixel art ────────────────────────────────────────────────────────
-const PS = 4; // pixels per dot
-
+const PS = 4;
 const NPAL = {
-    '.': null,
-    'B': '#1A1A1A', // black outline
-    'O': '#F4932A', // orange fur
-    'C': '#FFCF6E', // cream face
-    'W': '#FFFFFF', // white feet
-    'L': '#BDDFF7', // light blue uniform
-    'K': '#FF9BB0', // pinK tongue / inner ear
-    'Y': '#FFD700', // Yellow badge
-    'S': '#CC7010', // dark orange Stripe
-    'D': '#91C2E0', // Dark blue uniform detail
+    '.': null, 'B': '#1A1A1A', 'O': '#F4932A', 'C': '#FFCF6E',
+    'W': '#FFFFFF', 'L': '#BDDFF7', 'K': '#FF9BB0', 'Y': '#FFD700', 'S': '#CC7010',
 };
-
-// 14 wide × 15 tall body (rows 0-14), legs added separately per frame
 const NEKO_BODY = [
-    '..BOOOOOOB....', // 0  head top
-    '.BCCCCCCCB....', // 1  head
-    'BCSCCCCSCB....', // 2  stripes
-    'BCC.B.BCCB....', // 3  left eye(wink B col4), right eye(open B col6)
-    'BCCCBBBCCB....', // 4  big nose (3×B)
-    'BCCCCKCCCB....', // 5  tongue
-    '.BCCCCCCCB....', // 6  lower face
-    '..BBBBBBB.....', // 7  neck
-    '..BLLLLLLB....', // 8  uniform
-    '.BLLLYYLLB....', // 9  badge
-    '.BLLLYYLLB....', // 10 badge
-    '.BLLLLLLLLB...', // 11 uniform body
-    '.BLLLLLLLLB...', // 12 uniform body
-    '..BLLLLLLBOO..', // 13 hem + tail
-    '...BOOOOOBOO..', // 14 hips + tail
+    '..BOOOOOOB....', '.BCCCCCCCB....', 'BCSCCCCSCB....', 'BCC.B.BCCB....',
+    'BCCCBBBCCB....', 'BCCCCKCCCB....', '.BCCCCCCCB....', '..BBBBBBB.....',
+    '..BLLLLLLB....', '.BLLLYYLLB....', '.BLLLYYLLB....', '.BLLLLLLLLB...',
+    '.BLLLLLLLLB...', '..BLLLLLLBOO..', '...BOOOOOBOO..',
 ];
-
-// Legs rows (frame 0 = stride A, frame 1 = stride B)
 const NEKO_LEGS = [
-    ['.BOC...BOC....', '.BOO...BOO....', '.BWW...BWW....'], // frame 0
-    ['...BOC.BOC....', '...BOO.BOO....', '...BWW.BWW....'], // frame 1
+    ['.BOC...BOC....', '.BOO...BOO....', '.BWW...BWW....'],
+    ['...BOC.BOC....', '...BOO.BOO....', '...BWW.BWW....'],
 ];
-
-// Dead legs (splayed)
-const DEAD_LEGS = [
-    'BOC.....COB...', 'BWW.....WWB...', '..............'
-];
-
-// Thumbs-up arm pixels [row, col, colorKey]
+const DEAD_LEGS = ['BOC.....COB...', 'BWW.....WWB...', '..............'];
 const ARM_PIX = [
-    [4,11,'B'],
-    [5,10,'B'],[5,11,'O'],[5,12,'B'],
+    [4,11,'B'], [5,10,'B'],[5,11,'O'],[5,12,'B'],
     [6,10,'B'],[6,11,'O'],[6,12,'O'],[6,13,'B'],
     [7,10,'B'],[7,11,'O'],[7,12,'O'],[7,13,'B'],
-    [8,10,'B'],[8,11,'O'],[8,12,'B'],
-    [9,10,'B'],[9,11,'B'],
+    [8,10,'B'],[8,11,'O'],[8,12,'B'], [9,10,'B'],[9,11,'B'],
 ];
 
 function drawNekoShocho(x, y, af, onGround, dead) {
     const p = PS;
-
     function dot(key, c, r) {
         const col = NPAL[key];
-        if (col) { ctx.fillStyle = col; ctx.fillRect(x + c*p, y + r*p, p, p); }
+        if (col) { ctx.fillStyle = col; ctx.fillRect(x+c*p, y+r*p, p, p); }
     }
-
-    function drawRows(rows, rowOffset) {
-        rows.forEach((row, r) => {
-            for (let c = 0; c < row.length; c++) dot(row[c], c, r + rowOffset);
-        });
-    }
-
-    // Body
-    drawRows(NEKO_BODY, 0);
-
-    // Thumbs-up arm (bobs 1 dot every other frame)
-    if (!dead) {
-        const bob = af % 2;
-        ARM_PIX.forEach(([r, c, k]) => dot(k, c, r + bob));
-    }
-
-    // X eyes when dead (overlay on row 3)
+    function rows(arr, ro) { arr.forEach((row, r) => { for (let c = 0; c < row.length; c++) dot(row[c], c, r+ro); }); }
+    rows(NEKO_BODY, 0);
+    if (!dead) { const bob = af % 2; ARM_PIX.forEach(([r,c,k]) => dot(k,c,r+bob)); }
     if (dead) {
-        ctx.strokeStyle = '#FF3333';
-        ctx.lineWidth = p * 0.6;
-        ctx.lineCap = 'square';
-        // left eye X (col 3-5, row 2-4)
+        ctx.strokeStyle = '#FF3333'; ctx.lineWidth = p*0.6; ctx.lineCap = 'square';
         ctx.beginPath();
-        ctx.moveTo(x+3*p, y+2*p); ctx.lineTo(x+5*p, y+4*p);
-        ctx.moveTo(x+5*p, y+2*p); ctx.lineTo(x+3*p, y+4*p);
-        ctx.stroke();
-        // right eye X (col 5-8, row 2-4)
+        ctx.moveTo(x+3*p,y+2*p); ctx.lineTo(x+5*p,y+4*p);
+        ctx.moveTo(x+5*p,y+2*p); ctx.lineTo(x+3*p,y+4*p); ctx.stroke();
         ctx.beginPath();
-        ctx.moveTo(x+5.5*p, y+2*p); ctx.lineTo(x+7.5*p, y+4*p);
-        ctx.moveTo(x+7.5*p, y+2*p); ctx.lineTo(x+5.5*p, y+4*p);
-        ctx.stroke();
+        ctx.moveTo(x+5.5*p,y+2*p); ctx.lineTo(x+7.5*p,y+4*p);
+        ctx.moveTo(x+7.5*p,y+2*p); ctx.lineTo(x+5.5*p,y+4*p); ctx.stroke();
     }
-
-    // Legs
-    const legRows = dead ? DEAD_LEGS : NEKO_LEGS[af % 2];
-    drawRows(legRows, 15);
+    rows(dead ? DEAD_LEGS : NEKO_LEGS[af % 2], 15);
 }
 
-// ─── Dog obstacle ──────────────────────────────────────────────────────────────
-function drawDog(x, y, w, h, af) {
-    ctx.save();
+// ─── Pixel dog ─────────────────────────────────────────────────────────────────
+const DPAL = {
+    '.': null, 'B': '#1A1A1A', 'R': '#A0522D',
+    'r': '#D4956A', 'W': '#F5F5F5', 'K': '#FF9BB0', 'E': '#7A3B1E',
+};
+// Dog faces LEFT (toward cat), 12 wide × 12 tall
+const DOG_BODY = [
+    '....BEEEEB..', // 0  floppy ear
+    '..BRRRERrRB.', // 1  head + ear
+    '.BrrrrrrrRB.', // 2  head
+    'BrBrrrrrrRB.', // 3  eye (col1=B)
+    'BrBBBrrrrrB.', // 4  big nose
+    'BrrrrKrrrrB.', // 5  tongue
+    '.BrrrrrrrRB.', // 6  chin
+    '..BRRRRRRB..', // 7  body
+    '..BRrrrRRB..', // 8  marking
+    '...BRRRRB...', // 9  belly
+];
+const DOG_LEGS = [
+    ['..BR...BRB..', '..BW...BWB..'],
+    ['...BRBR.B...', '...BWBW.B...'],
+];
+// Tail pixels [row, col, colorKey] - wagging
+const DOG_TAIL = [
+    [[5,10,'B'],[4,11,'R'],[3,11,'R']],
+    [[6,10,'B'],[6,11,'R'],[5,11,'R']],
+];
 
-    const tailWag = af === 0 ? 1 : -1;
-
-    // tail
-    ctx.strokeStyle = '#6B3310';
-    ctx.lineWidth = 4; ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(x + w - 6, y + h * 0.48);
-    ctx.quadraticCurveTo(x + w + 14, y + h * 0.3 + tailWag * 16, x + w + 10, y + h * 0.08 + tailWag * 8);
-    ctx.stroke();
-
-    // body
-    ctx.fillStyle = '#A0522D';
-    ctx.strokeStyle = '#5C2800';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(x + w * 0.52, y + h * 0.62, w * 0.4, h * 0.3, 0, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
-
-    // spots
-    ctx.fillStyle = '#7B3F1A';
-    ctx.beginPath(); ctx.ellipse(x + w*0.6, y + h*0.55, 7, 5, 0.5, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(x + w*0.45, y + h*0.68, 5, 4, -0.3, 0, Math.PI*2); ctx.fill();
-
-    // head
-    ctx.fillStyle = '#A0522D';
-    ctx.strokeStyle = '#5C2800';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(x + w * 0.22, y + h * 0.34, w * 0.22, h * 0.26, 0, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
-
-    // snout
-    ctx.fillStyle = '#C4885A';
-    ctx.beginPath();
-    ctx.ellipse(x + w * 0.06, y + h * 0.4, w * 0.13, h * 0.13, 0, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
-
-    // nose
-    ctx.fillStyle = '#1a1a1a';
-    ctx.beginPath(); ctx.ellipse(x + w*0.03, y + h*0.36, 3, 2.5, 0, 0, Math.PI*2); ctx.fill();
-
-    // tongue
-    ctx.fillStyle = '#FF6B9D';
-    ctx.beginPath(); ctx.ellipse(x + w*0.06, y + h*0.47, 4, 6, 0.15, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#E0507A';
-    ctx.beginPath(); ctx.moveTo(x + w*0.06, y + h*0.44); ctx.lineTo(x + w*0.06, y + h*0.52); ctx.stroke();
-
-    // eye
-    ctx.fillStyle = '#1a1a1a';
-    ctx.beginPath(); ctx.ellipse(x + w*0.19, y + h*0.25, 3.5, 3.5, 0, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = 'white';
-    ctx.beginPath(); ctx.ellipse(x + w*0.18, y + h*0.24, 1.2, 1.2, 0, 0, Math.PI*2); ctx.fill();
-
-    // floppy ear
-    ctx.fillStyle = '#7A3B1E';
-    ctx.strokeStyle = '#5C2800'; ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.ellipse(x + w*0.3, y + h*0.18, 9, 15, -0.5, 0, Math.PI*2);
-    ctx.fill(); ctx.stroke();
-
-    // legs
-    ctx.strokeStyle = '#A0522D'; ctx.lineWidth = 6; ctx.lineCap = 'round';
-    const legPairs = [
-        [[x+w*0.33, y+h*0.82, x+w*0.26, y+h*1.05], [x+w*0.65, y+h*0.82, x+w*0.74, y+h*1.05]],
-        [[x+w*0.33, y+h*0.82, x+w*0.38, y+h*1.05], [x+w*0.65, y+h*0.82, x+w*0.58, y+h*1.05]],
-    ];
-    const lp = legPairs[af % 2];
-    ctx.beginPath(); ctx.moveTo(lp[0][0],lp[0][1]); ctx.lineTo(lp[0][2],lp[0][3]); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(lp[1][0],lp[1][1]); ctx.lineTo(lp[1][2],lp[1][3]); ctx.stroke();
-
-    ctx.restore();
+function drawPixelDog(x, y, ps, af) {
+    function dot(key, c, r) {
+        const col = DPAL[key];
+        if (col) { ctx.fillStyle = col; ctx.fillRect(x+c*ps, y+r*ps, ps, ps); }
+    }
+    function rows(arr, ro) { arr.forEach((row, r) => { for (let c = 0; c < row.length; c++) dot(row[c], c, r+ro); }); }
+    rows(DOG_BODY, 0);
+    rows(DOG_LEGS[af % 2], 10);
+    DOG_TAIL[af % 2].forEach(([r,c,k]) => dot(k, c, r));
 }
 
 // ─── Obstacle ──────────────────────────────────────────────────────────────────
+const DOG_SIZES = [
+    { ps: 3, w: 36, h: 36 },
+    { ps: 4, w: 48, h: 48 },
+];
 class Obstacle {
     constructor() {
-        const sizes = [
-            [40, 46], [50, 58], [44, 52], [36, 42],
-        ];
-        const [w, h] = sizes[Math.floor(Math.random() * sizes.length)];
-        this.w = w; this.h = h;
-        this.x = W + 20;
-        this.y = GROUND_Y - h;
+        const s = DOG_SIZES[Math.floor(Math.random() * DOG_SIZES.length)];
+        this.ps = s.ps; this.w = s.w; this.h = s.h;
+        this.x = W + 20; this.y = GROUND_Y - this.h;
         this.af = 0; this.afTimer = 0;
     }
     update() {
@@ -304,160 +180,203 @@ class Obstacle {
         this.afTimer++;
         if (this.afTimer >= 9) { this.af = (this.af + 1) % 2; this.afTimer = 0; }
     }
-    draw() { drawDog(this.x, this.y, this.w, this.h, this.af); }
+    draw() { drawPixelDog(this.x, this.y, this.ps, this.af); }
     hitbox() {
-        const m = 7;
+        const m = this.ps * 2;
         return { x: this.x + m, y: this.y + m, w: this.w - m*2, h: this.h - m*2 };
     }
 }
 
-// ─── Cloud ─────────────────────────────────────────────────────────────────────
+// ─── Pixel Cloud ───────────────────────────────────────────────────────────────
+const CLOUD_PX = [
+    '...CCCCCC...',
+    '.CCCCCCCCCC.',
+    'CCCCCCCCCCCC',
+    '.CCCCCCCCCC.',
+    '...CCCCCC...',
+];
 class Cloud {
-    constructor(randomX) {
-        this.x = randomX !== undefined ? randomX : W + 60;
-        this.y = 18 + Math.random() * 65;
-        this.r = 22 + Math.random() * 30;
+    constructor(rx) {
+        this.x = rx !== undefined ? rx : W + 80;
+        this.y = 14 + Math.random() * 55;
+        this.ps = Math.random() < 0.5 ? 3 : 4;
         this.spd = 0.4 + Math.random() * 0.5;
     }
     update() { this.x -= this.spd; }
     draw() {
-        ctx.fillStyle = 'rgba(255,255,255,0.55)';
-        ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.arc(this.x + this.r*0.55, this.y + 6, this.r*0.62, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.arc(this.x - this.r*0.5, this.y + 9, this.r*0.5, 0, Math.PI*2); ctx.fill();
+        const p = this.ps;
+        CLOUD_PX.forEach((row, r) => {
+            for (let c = 0; c < row.length; c++) {
+                if (row[c] === 'C') {
+                    ctx.fillStyle = '#FCFCFC';
+                    ctx.fillRect(this.x + c*p, this.y + r*p, p, p);
+                }
+            }
+        });
     }
 }
 
-// ─── Death puff ────────────────────────────────────────────────────────────────
+// ─── Pixel Puff ────────────────────────────────────────────────────────────────
 class Puff {
     constructor(x, y) {
         this.x = x; this.y = y;
         this.vx = (Math.random() - 0.5) * 6;
         this.vy = -4 - Math.random() * 4;
-        this.r = 6 + Math.random() * 8;
+        this.size = 4 + Math.floor(Math.random() * 3) * 4;
         this.life = 1.0;
-        this.color = ['#FF8C42','#FFD700','#FF6B6B','#FFF'][Math.floor(Math.random()*4)];
+        this.color = ['#F4932A','#FFD700','#FF6B6B','#FCFCFC','#BDDFF7'][Math.floor(Math.random()*5)];
     }
-    update() {
-        this.x += this.vx; this.vy += 0.3; this.y += this.vy;
-        this.life -= 0.04;
-    }
+    update() { this.x += this.vx; this.vy += 0.3; this.y += this.vy; this.life -= 0.04; }
     draw() {
-        ctx.save();
+        const s = Math.max(2, Math.floor(this.size * this.life / 2) * 2);
         ctx.globalAlpha = this.life;
         ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.r * this.life, 0, Math.PI*2);
-        ctx.fill();
-        ctx.restore();
+        ctx.fillRect(Math.round(this.x - s/2), Math.round(this.y - s/2), s, s);
+        ctx.globalAlpha = 1;
     }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 function collides(a, b) {
-    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
 }
-
 function spawnObstacle() {
     nextObsIn--;
     if (nextObsIn <= 0) {
         obstacles.push(new Obstacle());
-        const minGap = Math.max(100 - Math.floor(score / 80) * 6, 30);
-        nextObsIn = minGap + Math.floor(Math.random() * 60);
+        const gap = Math.max(100 - Math.floor(score/80)*6, 30);
+        nextObsIn = gap + Math.floor(Math.random() * 60);
     }
 }
-
 function spawnCloud() {
     if (clouds.length < 5 && Math.random() < 0.004) clouds.push(new Cloud());
 }
 
+// ─── Pixel box helper ──────────────────────────────────────────────────────────
+function pixelBox(x, y, w, h, bg, border) {
+    ctx.fillStyle = border;
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = bg;
+    ctx.fillRect(x+4, y+4, w-8, h-8);
+}
+
 // ─── Draw background ───────────────────────────────────────────────────────────
 function drawBG() {
-    // sky
-    const sky = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
-    sky.addColorStop(0, '#90D5F5');
-    sky.addColorStop(1, '#DCF0FF');
-    ctx.fillStyle = sky;
+    bgOff += speed * 0.18;
+
+    // NES-style solid sky
+    ctx.fillStyle = '#5C94FC';
     ctx.fillRect(0, 0, W, GROUND_Y);
 
-    // distant trees (decorative)
-    ctx.fillStyle = 'rgba(100,160,80,0.35)';
-    for (let tx = 0; tx < W; tx += 90) {
-        const ox = ((tx - groundOff * 0.3) % W + W) % W;
-        ctx.beginPath();
-        ctx.arc(ox, GROUND_Y - 30, 22, 0, Math.PI*2);
-        ctx.fill();
-        ctx.fillRect(ox - 5, GROUND_Y - 20, 10, 20);
+    // Far background: dark tree silhouettes (slow parallax)
+    ctx.fillStyle = '#2060B0';
+    for (let tx = -(bgOff * 0.2) % 100; tx < W + 10; tx += 100) {
+        const ox = Math.round(tx);
+        ctx.fillRect(ox,      GROUND_Y - 52, 48, 28); // canopy
+        ctx.fillRect(ox + 16, GROUND_Y - 28, 16, 28); // trunk
+    }
+
+    // Mid background: bushes (medium parallax)
+    ctx.fillStyle = '#1A9A1A';
+    for (let tx = -(bgOff * 0.4) % 80; tx < W + 10; tx += 80) {
+        const ox = Math.round(tx);
+        ctx.fillRect(ox + 4,  GROUND_Y - 20, 32, 12);
+        ctx.fillRect(ox,      GROUND_Y - 12, 40, 12);
     }
 }
 
+// ─── Draw ground (pixel tiles) ─────────────────────────────────────────────────
 function drawGround() {
-    // grass strip
-    ctx.fillStyle = '#7CB84A';
-    ctx.fillRect(0, GROUND_Y, W, GROUND_H);
-    ctx.fillStyle = '#5A9130';
-    ctx.fillRect(0, GROUND_Y, W, 6);
+    groundOff = (groundOff + speed) % (GP * 8);
 
-    // dirt
-    ctx.fillStyle = '#B8864E';
-    ctx.fillRect(0, GROUND_Y + 20, W, GROUND_H - 20);
+    // Bright grass top
+    ctx.fillStyle = '#00C800';
+    ctx.fillRect(0, GROUND_Y, W, GP);
+    ctx.fillStyle = '#00A800';
+    ctx.fillRect(0, GROUND_Y + GP, W, GP);
+    ctx.fillStyle = '#007800';
+    ctx.fillRect(0, GROUND_Y + GP*2, W, GP);
 
-    // scrolling dashes
-    ctx.fillStyle = '#6AA33E';
-    groundOff = (groundOff + speed) % 50;
-    for (let gx = -groundOff; gx < W; gx += 50) {
-        ctx.fillRect(gx, GROUND_Y + 8, 30, 4);
+    // Dirt
+    ctx.fillStyle = '#9C5020';
+    ctx.fillRect(0, GROUND_Y + GP*3, W, GROUND_H - GP*3);
+
+    // Scrolling dirt tiles
+    ctx.fillStyle = '#7A3C14';
+    for (let gx = -groundOff; gx < W; gx += GP*8) {
+        ctx.fillRect(Math.round(gx), GROUND_Y + GP*4, GP*4, GP*2);
+    }
+
+    // Scrolling grass highlights
+    ctx.fillStyle = '#44EE44';
+    for (let gx = (-groundOff*0.5 + 24) % (GP*14); gx < W; gx += GP*14) {
+        ctx.fillRect(Math.round(gx), GROUND_Y, GP*2, GP);
     }
 }
 
+// ─── HUD ───────────────────────────────────────────────────────────────────────
 function drawHUD() {
+    const font = '"Press Start 2P", monospace';
     ctx.textAlign = 'right';
-    ctx.fillStyle = '#444';
-    ctx.font = 'bold 16px "Courier New"';
-    ctx.fillText('HI ' + String(hiScore).padStart(5, '0'), W - 16, 32);
-    ctx.fillStyle = '#222';
-    ctx.fillText(String(Math.floor(score)).padStart(5, '0'), W - 16, 54);
+    // Shadow
+    ctx.fillStyle = '#000';
+    ctx.font = `13px ${font}`;
+    ctx.fillText('HI ' + String(hiScore).padStart(5,'0'), W-13, 29);
+    ctx.fillText(String(Math.floor(score)).padStart(5,'0'),  W-13, 51);
+    // Text
+    ctx.fillStyle = '#FCFCFC';
+    ctx.fillText('HI ' + String(hiScore).padStart(5,'0'), W-15, 27);
+    ctx.fillStyle = '#FFD700';
+    ctx.fillText(String(Math.floor(score)).padStart(5,'0'),  W-15, 49);
 
-    // speed indicator stars
-    const stars = Math.min(Math.floor(score / 200), 5);
+    // Speed stars
+    const stars = Math.min(Math.floor(score/200), 5);
     ctx.textAlign = 'left';
-    ctx.font = '14px sans-serif';
-    ctx.fillText('★'.repeat(stars) + '☆'.repeat(5 - stars), 12, 32);
+    ctx.font = `10px ${font}`;
+    ctx.fillStyle = '#000';
+    ctx.fillText('*'.repeat(stars) + '-'.repeat(5-stars), 13, 27);
+    ctx.fillStyle = '#FCBA03';
+    ctx.fillText('*'.repeat(stars) + '-'.repeat(5-stars), 12, 26);
 }
 
+// ─── Overlay screens ───────────────────────────────────────────────────────────
 function drawStartScreen() {
-    ctx.fillStyle = 'rgba(0,0,0,0.42)';
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(0, 0, W, H);
+    pixelBox(W/2-220, H/2-68, 440, 136, '#000C28', '#FCBA03');
+    const font = '"Press Start 2P", monospace';
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#FFF';
-    ctx.font = 'bold 30px "Courier New"';
-    ctx.fillText('🐱  ネコランナー  🐶', W/2, H/2 - 36);
-    ctx.font = '17px "Courier New"';
-    ctx.fillStyle = '#FFE0B8';
-    ctx.fillText('イヌを避けてネコを走らせよう！', W/2, H/2 + 2);
-    ctx.font = '15px "Courier New"';
-    ctx.fillStyle = '#CCC';
-    ctx.fillText('スペース / クリック / タップでスタート', W/2, H/2 + 34);
+    ctx.fillStyle = '#FCBA03';
+    ctx.font = `18px ${font}`;
+    ctx.fillText('NEKO RUNNER', W/2, H/2 - 26);
+    ctx.fillStyle = '#FCFCFC';
+    ctx.font = `8px ${font}`;
+    ctx.fillText('AVOID THE DOGS!', W/2, H/2 - 4);
+    ctx.fillStyle = '#88AACC';
+    ctx.fillText('PRESS SPACE OR TAP TO START', W/2, H/2 + 18);
+    ctx.fillText('2x JUMP AVAILABLE', W/2, H/2 + 38);
 }
 
 function drawDeadScreen() {
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(0, 0, W, H);
+    pixelBox(W/2-200, H/2-68, 400, 136, '#200000', '#FF3333');
+    const font = '"Press Start 2P", monospace';
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#FF6B6B';
-    ctx.font = 'bold 32px "Courier New"';
-    ctx.fillText('GAME  OVER  😿', W/2, H/2 - 34);
-    ctx.fillStyle = '#FFF';
-    ctx.font = '18px "Courier New"';
-    ctx.fillText('スコア: ' + Math.floor(score), W/2, H/2 + 4);
+    ctx.fillStyle = '#FF3333';
+    ctx.font = `18px ${font}`;
+    ctx.fillText('GAME OVER', W/2, H/2 - 26);
+    ctx.fillStyle = '#FCFCFC';
+    ctx.font = `10px ${font}`;
+    ctx.fillText('SCORE ' + String(Math.floor(score)).padStart(5,'0'), W/2, H/2 - 2);
     if (score >= hiScore && score > 0) {
         ctx.fillStyle = '#FFD700';
-        ctx.font = 'bold 15px "Courier New"';
-        ctx.fillText('🏆 ハイスコア更新！', W/2, H/2 + 30);
+        ctx.font = `9px ${font}`;
+        ctx.fillText('NEW RECORD!', W/2, H/2 + 20);
     }
-    ctx.fillStyle = '#CCC';
-    ctx.font = '14px "Courier New"';
-    ctx.fillText('スペース / クリックでリトライ', W/2, H/2 + 54);
+    ctx.fillStyle = '#666';
+    ctx.font = `7px ${font}`;
+    ctx.fillText('PRESS SPACE OR TAP', W/2, H/2 + 42);
 }
 
 // ─── Reset ─────────────────────────────────────────────────────────────────────
@@ -465,55 +384,43 @@ function reset() {
     score = 0; speed = 5; frame = 0; nextObsIn = 80;
     obstacles.length = 0; puffs.length = 0;
     cat.y = GROUND_Y - cat.h; cat.vy = 0;
-    cat.onGround = true; cat.jumps = 0;
-    cat.animFrame = 0; cat.animTimer = 0;
+    cat.onGround = true; cat.jumps = 0; cat.animFrame = 0; cat.animTimer = 0;
     state = 'playing';
 }
 
-// ─── Main loop ─────────────────────────────────────────────────────────────────
+// ─── Update ────────────────────────────────────────────────────────────────────
 function update() {
     if (state !== 'playing') {
-        // puffs still animate on dead screen
-        for (let i = puffs.length - 1; i >= 0; i--) {
+        for (let i = puffs.length-1; i >= 0; i--) {
             puffs[i].update();
             if (puffs[i].life <= 0) puffs.splice(i, 1);
         }
         return;
     }
-
     frame++;
     score += 0.12;
-    speed = Math.min(5 + Math.floor(score / 100) * 0.6, 16);
-
+    speed = Math.min(5 + Math.floor(score/100) * 0.6, 16);
     cat.update();
-    spawnObstacle();
-    spawnCloud();
-
-    for (let i = obstacles.length - 1; i >= 0; i--) {
+    spawnObstacle(); spawnCloud();
+    for (let i = obstacles.length-1; i >= 0; i--) {
         obstacles[i].update();
         if (obstacles[i].x + obstacles[i].w < -20) obstacles.splice(i, 1);
     }
-    for (let i = clouds.length - 1; i >= 0; i--) {
+    for (let i = clouds.length-1; i >= 0; i--) {
         clouds[i].update();
         if (clouds[i].x < -80) clouds.splice(i, 1);
     }
-
-    // collision
     const ch = cat.hitbox();
     for (const obs of obstacles) {
         if (collides(ch, obs.hitbox())) {
-            // spawn puffs
-            for (let p = 0; p < 18; p++) puffs.push(new Puff(cat.x + cat.w/2, cat.y + cat.h/2));
-            if (score > hiScore) {
-                hiScore = Math.floor(score);
-                localStorage.setItem('neko_hi', hiScore);
-            }
-            state = 'dead';
-            return;
+            for (let p = 0; p < 20; p++) puffs.push(new Puff(cat.x + cat.w/2, cat.y + cat.h/2));
+            if (score > hiScore) { hiScore = Math.floor(score); localStorage.setItem('neko_hi', hiScore); }
+            state = 'dead'; return;
         }
     }
 }
 
+// ─── Draw ──────────────────────────────────────────────────────────────────────
 function draw() {
     ctx.clearRect(0, 0, W, H);
     drawBG();
@@ -524,32 +431,19 @@ function draw() {
     for (const p of puffs) p.draw();
     drawHUD();
     if (state === 'start') drawStartScreen();
-    if (state === 'dead') drawDeadScreen();
+    if (state === 'dead')  drawDeadScreen();
 }
 
-function loop() {
-    update();
-    draw();
-    requestAnimationFrame(loop);
-}
+function loop() { update(); draw(); requestAnimationFrame(loop); }
 
 // ─── Input ─────────────────────────────────────────────────────────────────────
-function input() {
-    if (state === 'start' || state === 'dead') reset();
-    else cat.jump();
-}
-
-document.addEventListener('keydown', e => {
-    if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); input(); }
-});
+function input() { if (state === 'start' || state === 'dead') reset(); else cat.jump(); }
+document.addEventListener('keydown', e => { if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); input(); } });
 canvas.addEventListener('click', input);
 canvas.addEventListener('touchstart', e => { e.preventDefault(); input(); }, { passive: false });
 
 // ─── Init ──────────────────────────────────────────────────────────────────────
-for (let i = 0; i < 4; i++) {
-    const c = new Cloud(Math.random() * W);
-    clouds.push(c);
-}
+for (let i = 0; i < 4; i++) clouds.push(new Cloud(Math.random() * W));
 loop();
 </script>
 </body>
