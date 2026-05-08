@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ネコランナー 🐱</title>
+    <title>ねこ店長ランナー 🐱</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -39,7 +39,7 @@
     </style>
 </head>
 <body>
-    <h1>🐱 ネコランナー</h1>
+    <h1>🐱 ねこ店長ランナー</h1>
     <canvas id="game" width="800" height="300"></canvas>
     <p class="hint">スペース / ↑ / タップ でジャンプ（2段ジャンプあり）</p>
 
@@ -67,9 +67,9 @@ const puffs = []; // death particle puffs
 // ─── Cat ───────────────────────────────────────────────────────────────────────
 const cat = {
     x: 80,
-    y: GROUND_Y - 64,
+    y: GROUND_Y - 72,
     w: 56,
-    h: 64,
+    h: 72,
     vy: 0,
     onGround: true,
     jumps: 0,
@@ -109,160 +109,105 @@ const cat = {
     }
 };
 
-// ─── Draw cat ──────────────────────────────────────────────────────────────────
-function drawCat(x, y, af, onGround, dead) {
-    ctx.save();
+// ─── ねこ店長 pixel art ────────────────────────────────────────────────────────
+const PS = 4; // pixels per dot
 
-    const tailWag = Math.sin(af * Math.PI / 2) * 14;
+const NPAL = {
+    '.': null,
+    'B': '#1A1A1A', // black outline
+    'O': '#F4932A', // orange fur
+    'C': '#FFCF6E', // cream face
+    'W': '#FFFFFF', // white feet
+    'L': '#BDDFF7', // light blue uniform
+    'K': '#FF9BB0', // pinK tongue / inner ear
+    'Y': '#FFD700', // Yellow badge
+    'S': '#CC7010', // dark orange Stripe
+    'D': '#91C2E0', // Dark blue uniform detail
+};
 
-    // tail
-    ctx.strokeStyle = '#E07030';
-    ctx.lineWidth = 5;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(x + 6, y + 42);
-    ctx.quadraticCurveTo(x - 18, y + 56 + tailWag, x - 4, y + 72 + tailWag * 0.4);
-    ctx.stroke();
+// 14 wide × 15 tall body (rows 0-14), legs added separately per frame
+const NEKO_BODY = [
+    '..BOOOOOOB....', // 0  head top
+    '.BCCCCCCCB....', // 1  head
+    'BCSCCCCSCB....', // 2  stripes
+    'BCC.B.BCCB....', // 3  left eye(wink B col4), right eye(open B col6)
+    'BCCCBBBCCB....', // 4  big nose (3×B)
+    'BCCCCKCCCB....', // 5  tongue
+    '.BCCCCCCCB....', // 6  lower face
+    '..BBBBBBB.....', // 7  neck
+    '..BLLLLLLB....', // 8  uniform
+    '.BLLLYYLLB....', // 9  badge
+    '.BLLLYYLLB....', // 10 badge
+    '.BLLLLLLLLB...', // 11 uniform body
+    '.BLLLLLLLLB...', // 12 uniform body
+    '..BLLLLLLBOO..', // 13 hem + tail
+    '...BOOOOOBOO..', // 14 hips + tail
+];
 
-    // body
-    ctx.fillStyle = '#FF8C42';
-    ctx.strokeStyle = '#C05A10';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(x + 26, y + 42, 22, 18, 0, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
+// Legs rows (frame 0 = stride A, frame 1 = stride B)
+const NEKO_LEGS = [
+    ['.BOC...BOC....', '.BOO...BOO....', '.BWW...BWW....'], // frame 0
+    ['...BOC.BOC....', '...BOO.BOO....', '...BWW.BWW....'], // frame 1
+];
 
-    // belly
-    ctx.fillStyle = '#FFE0B8';
-    ctx.beginPath();
-    ctx.ellipse(x + 26, y + 45, 13, 11, 0, 0, Math.PI * 2);
-    ctx.fill();
+// Dead legs (splayed)
+const DEAD_LEGS = [
+    'BOC.....COB...', 'BWW.....WWB...', '..............'
+];
 
-    // body stripes
-    ctx.strokeStyle = '#C05A10';
-    ctx.lineWidth = 1.5;
-    [[-8, 12], [-4, 10]].forEach(([dx, dy]) => {
-        ctx.beginPath();
-        ctx.moveTo(x + 16 + dx, y + 35);
-        ctx.lineTo(x + 12 + dx, y + 45);
-        ctx.stroke();
-    });
+// Thumbs-up arm pixels [row, col, colorKey]
+const ARM_PIX = [
+    [4,11,'B'],
+    [5,10,'B'],[5,11,'O'],[5,12,'B'],
+    [6,10,'B'],[6,11,'O'],[6,12,'O'],[6,13,'B'],
+    [7,10,'B'],[7,11,'O'],[7,12,'O'],[7,13,'B'],
+    [8,10,'B'],[8,11,'O'],[8,12,'B'],
+    [9,10,'B'],[9,11,'B'],
+];
 
-    // head
-    ctx.fillStyle = '#FF8C42';
-    ctx.strokeStyle = '#C05A10';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(x + 37, y + 20, 17, 16, 0, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
+function drawNekoShocho(x, y, af, onGround, dead) {
+    const p = PS;
 
-    // left ear
-    ctx.fillStyle = '#FF8C42';
-    ctx.strokeStyle = '#C05A10';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(x + 22, y + 9); ctx.lineTo(x + 17, y - 6); ctx.lineTo(x + 30, y + 6);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#FFB3C1';
-    ctx.beginPath();
-    ctx.moveTo(x + 23, y + 8); ctx.lineTo(x + 19, y - 3); ctx.lineTo(x + 29, y + 6);
-    ctx.closePath(); ctx.fill();
+    function dot(key, c, r) {
+        const col = NPAL[key];
+        if (col) { ctx.fillStyle = col; ctx.fillRect(x + c*p, y + r*p, p, p); }
+    }
 
-    // right ear
-    ctx.fillStyle = '#FF8C42';
-    ctx.strokeStyle = '#C05A10';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(x + 44, y + 7); ctx.lineTo(x + 52, y - 6); ctx.lineTo(x + 54, y + 9);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#FFB3C1';
-    ctx.beginPath();
-    ctx.moveTo(x + 45, y + 7); ctx.lineTo(x + 51, y - 3); ctx.lineTo(x + 52, y + 8);
-    ctx.closePath(); ctx.fill();
-
-    // eyes
-    if (dead) {
-        // X eyes
-        ctx.strokeStyle = '#1a1a1a';
-        ctx.lineWidth = 2.5;
-        [[x+31, y+18], [x+43, y+18]].forEach(([ex, ey]) => {
-            ctx.beginPath();
-            ctx.moveTo(ex-3, ey-3); ctx.lineTo(ex+3, ey+3); ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(ex+3, ey-3); ctx.lineTo(ex-3, ey+3); ctx.stroke();
+    function drawRows(rows, rowOffset) {
+        rows.forEach((row, r) => {
+            for (let c = 0; c < row.length; c++) dot(row[c], c, r + rowOffset);
         });
-    } else {
-        const blink = frame % 140 < 4;
-        if (blink) {
-            ctx.strokeStyle = '#1a1a1a';
-            ctx.lineWidth = 2;
-            [[x+31, y+19], [x+43, y+19]].forEach(([ex, ey]) => {
-                ctx.beginPath();
-                ctx.arc(ex, ey, 4, Math.PI * 0.1, Math.PI * 0.9);
-                ctx.stroke();
-            });
-        } else {
-            // iris
-            ctx.fillStyle = '#2ECC71';
-            [[x+31, y+19], [x+43, y+19]].forEach(([ex, ey]) => {
-                ctx.beginPath(); ctx.ellipse(ex, ey, 4.5, 4.5, 0, 0, Math.PI*2); ctx.fill();
-            });
-            // pupil
-            ctx.fillStyle = '#111';
-            [[x+31, y+19], [x+43, y+19]].forEach(([ex, ey]) => {
-                ctx.beginPath(); ctx.ellipse(ex, ey, 2, 3.2, 0, 0, Math.PI*2); ctx.fill();
-            });
-            // shine
-            ctx.fillStyle = 'white';
-            [[x+32, y+18], [x+44, y+18]].forEach(([ex, ey]) => {
-                ctx.beginPath(); ctx.ellipse(ex, ey, 1.2, 1.2, 0, 0, Math.PI*2); ctx.fill();
-            });
-        }
     }
 
-    // nose
-    ctx.fillStyle = '#FF69B4';
-    ctx.beginPath();
-    ctx.moveTo(x+37, y+26); ctx.lineTo(x+33, y+29); ctx.lineTo(x+41, y+29);
-    ctx.closePath(); ctx.fill();
+    // Body
+    drawRows(NEKO_BODY, 0);
 
-    // mouth
+    // Thumbs-up arm (bobs 1 dot every other frame)
+    if (!dead) {
+        const bob = af % 2;
+        ARM_PIX.forEach(([r, c, k]) => dot(k, c, r + bob));
+    }
+
+    // X eyes when dead (overlay on row 3)
     if (dead) {
-        ctx.strokeStyle = '#C05A10'; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.arc(x+37, y+36, 6, 0.1, Math.PI-0.1); ctx.stroke();
-    } else {
-        ctx.strokeStyle = '#C05A10'; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.moveTo(x+37, y+29); ctx.lineTo(x+33, y+32); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(x+37, y+29); ctx.lineTo(x+41, y+32); ctx.stroke();
+        ctx.strokeStyle = '#FF3333';
+        ctx.lineWidth = p * 0.6;
+        ctx.lineCap = 'square';
+        // left eye X (col 3-5, row 2-4)
+        ctx.beginPath();
+        ctx.moveTo(x+3*p, y+2*p); ctx.lineTo(x+5*p, y+4*p);
+        ctx.moveTo(x+5*p, y+2*p); ctx.lineTo(x+3*p, y+4*p);
+        ctx.stroke();
+        // right eye X (col 5-8, row 2-4)
+        ctx.beginPath();
+        ctx.moveTo(x+5.5*p, y+2*p); ctx.lineTo(x+7.5*p, y+4*p);
+        ctx.moveTo(x+7.5*p, y+2*p); ctx.lineTo(x+5.5*p, y+4*p);
+        ctx.stroke();
     }
 
-    // whiskers
-    ctx.strokeStyle = 'rgba(100,80,60,0.7)'; ctx.lineWidth = 1;
-    [[x+33,y+28,x+12,y+25],[x+33,y+30,x+12,y+31],
-     [x+41,y+28,x+60,y+25],[x+41,y+30,x+60,y+31]].forEach(([x1,y1,x2,y2]) => {
-        ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
-    });
-
-    // legs
-    ctx.strokeStyle = '#E07030'; ctx.lineWidth = 7; ctx.lineCap = 'round';
-    if (!onGround || dead) {
-        // tucked
-        ctx.beginPath(); ctx.moveTo(x+18, y+54); ctx.lineTo(x+10, y+62); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(x+34, y+54); ctx.lineTo(x+44, y+62); ctx.stroke();
-    } else {
-        // running frames
-        const legs = [
-            [[x+18,y+54,x+12,y+66],[x+34,y+54,x+40,y+66]],
-            [[x+18,y+54,x+21,y+66],[x+34,y+54,x+31,y+66]],
-            [[x+18,y+54,x+26,y+66],[x+34,y+54,x+24,y+66]],
-            [[x+18,y+54,x+15,y+66],[x+34,y+54,x+37,y+66]],
-        ];
-        const lf = legs[af % 4];
-        ctx.beginPath(); ctx.moveTo(lf[0][0],lf[0][1]); ctx.lineTo(lf[0][2],lf[0][3]); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(lf[1][0],lf[1][1]); ctx.lineTo(lf[1][2],lf[1][3]); ctx.stroke();
-    }
-
-    ctx.restore();
+    // Legs
+    const legRows = dead ? DEAD_LEGS : NEKO_LEGS[af % 2];
+    drawRows(legRows, 15);
 }
 
 // ─── Dog obstacle ──────────────────────────────────────────────────────────────
@@ -575,7 +520,7 @@ function draw() {
     for (const c of clouds) c.draw();
     drawGround();
     for (const o of obstacles) o.draw();
-    drawCat(cat.x, cat.y, cat.animFrame, cat.onGround, state === 'dead');
+    drawNekoShocho(cat.x, cat.y, cat.animFrame, cat.onGround, state === 'dead');
     for (const p of puffs) p.draw();
     drawHUD();
     if (state === 'start') drawStartScreen();
