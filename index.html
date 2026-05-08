@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="ja"><!-- v3 -->
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ねこ店長ランナー</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: 'Press Start 2P', 'Courier New', monospace;
+            user-select: none;
+        }
+        h1 {
+            color: #FCBA03;
+            font-size: 1rem;
+            margin-bottom: 0.8rem;
+            text-shadow: 3px 3px 0 #000;
+            letter-spacing: 2px;
+        }
+        canvas {
+            border: 4px solid #FCBA03;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+        }
+        .hint {
+            color: #555;
+            margin-top: 0.6rem;
+            font-size: 0.4rem;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <h1>NEKO RUNNER</h1>
+    <canvas id="game" width="800" height="300"></canvas>
+    <p class="hint">SPACE / TAP = JUMP &nbsp;|&nbsp; 2x JUMP OK</p>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+const W = canvas.width, H = canvas.height;
+const GROUND_H = 52;
+const GROUND_Y = H - GROUND_H;
+const GP = 4; // ground pixel unit
+
+// ─── State ─────────────────────────────────────────────────────────────────────
+let state = 'start';
+let score = 0;
+let hiScore = parseInt(localStorage.getItem('neko_hi') || '0');
+let speed = 5;
+let frame = 0;
+let nextObsIn = 80;
+let groundOff = 0;
+let bgOff = 0;
+let currentLevel = 0;
+let levelUpTimer = 0;
+let doubleNext = false;
+const obstacles = [], clouds = [], puffs = [];
+
+// ─── Cat ───────────────────────────────────────────────────────────────────────
+const cat = {
+    x: 80, y: GROUND_Y - 72, w: 56, h: 72,
+    vy: 0, onGround: true, jumps: 0, animFrame: 0, animTimer: 0,
+    jump() { if (this.jumps < 2) { this.vy = -13.5; this.onGround = false; this.jumps++; } },
+    update() {
+        if (!this.onGround) { this.vy += 0.72; this.y += this.vy; }
+        const floor = GROUND_Y - this.h;
+        if (this.y >= floor) { this.y = floor; this.vy = 0; this.onGround = true; this.jumps = 0; }
+        this.animTimer++;
+        if (this.animTimer >= (this.onGround ? 7 : 25)) { this.animFrame = (this.animFrame + 1) % 4; this.animTimer = 0; }
+    },
+    hitbox() { return { x: this.x + 10, y: this.y + 6, w: this.w - 18, h: this.h - 8 }; }
+};
+
+// ─── ねこ店長 pixel art ────────────────────────────────────────────────────────
+const PS = 4;
+const NPAL = {
+    '.': null, 'B': '#1A1A1A', 'O': '#F4932A', 'C': '#FFCF6E',
+    'W': '#FFFFFF', 'L': '#BDDFF7', 'K': '#FF9BB0', 'Y': '#FFD700', 'S': '#CC7010',
+};
+const NEKO_BODY = [
+    '..BOOOOOOB....', '.BCCCCCCCB....', 'BCSCCCCSCB....', 'BCC.B.BCCB....',
+    'BCCCBBBCCB....', 'BCCCCKCCCB....', '.BCCCCCCCB....', '..BBBBBBB.....',
+    '..BLLLLLLB....', '.BLLLYYLLB....', '.BLLLYYLLB....', '.BLLLLLLLLB...',
+    '.BLLLLLLLLB...', '..BLLLLLLBOO..', '...BOOOOOBOO..',
+];
+const NEKO_LEGS = [
+    ['.BOC...BOC....', '.BOO...BOO....', '.BWW...BWW....'],
+    ['...BOC.BOC....', '...BOO.BOO....', '...BWW.BWW....'],
+];
+const DEAD_LEGS = ['BOC.....COB...', 'BWW.....WWB...', '..............'];
+const ARM_PIX = [
+    [4,11,'B'], [5,10,'B'],[5,11,'O'],[5,12,'B'],
+    [6,10,'B'],[6,11,'O'],[6,12,'O'],[6,13,'B'],
+    [7,10,'B'],[7,11,'O'],[7,12,'O'],[7,13,'B'],
+    [8,10,'B'],[8,11,'O'],[8,12,'B'], [9,10,'B'],[9,11,'B'],
+];
+
+function drawNekoShocho(x, y, af, onGround, dead) {
+    const p = PS;
+    function dot(key, c, r) {
+        const col = NPAL[key];
+        if (col) { ctx.fillStyle = col; ctx.fillRect(x+c*p, y+r*p, p, p); }
+    }
+    function rows(arr, ro) { arr.forEach((row, r) => { for (let c = 0; c < row.length; c++) dot(row[c], c, r+ro); }); }
+    rows(NEKO_BODY, 0);
+    if (!dead) { const bob = af % 2; ARM_PIX.forEach(([r,c,k]) => dot(k,c,r+bob)); }
+    if (dead) {
+        ctx.strokeStyle = '#FF3333'; ctx.lineWidth = p*0.6; ctx.lineCap = 'square';
+        ctx.beginPath();
+        ctx.moveTo(x+3*p,y+2*p); ctx.lineTo(x+5*p,y+4*p);
+        ctx.moveTo(x+5*p,y+2*p); ctx.lineTo(x+3*p,y+4*p); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x+5.5*p,y+2*p); ctx.lineTo(x+7.5*p,y+4*p);
+        ctx.moveTo(x+7.5*p,y+2*p); ctx.lineTo(x+5.5*p,y+4*p); ctx.stroke();
+    }
+    rows(dead ? DEAD_LEGS : NEKO_LEGS[af % 2], 15);
+}
+
+// ─── Pixel dog ─────────────────────────────────────────────────────────────────
+const DPAL = {
+    '.': null, 'B': '#1A1A1A', 'R': '#A0522D',
+    'r': '#D4956A', 'W': '#F5F5F5', 'K': '#FF9BB0', 'E': '#7A3B1E',
+};
+// Dog faces LEFT (toward cat), 12 wide × 12 tall
+const DOG_BODY = [
+    '....BEEEEB..', // 0  floppy ear
+    '..BRRRERrRB.', // 1  head + ear
+    '.BrrrrrrrRB.', // 2  head
+    'BrBrrrrrrRB.', // 3  eye (col1=B)
+    'BrBBBrrrrrB.', // 4  big nose
+    'BrrrrKrrrrB.', // 5  tongue
+    '.BrrrrrrrRB.', // 6  chin
+    '..BRRRRRRB..', // 7  body
+    '..BRrrrRRB..', // 8  marking
+    '...BRRRRB...', // 9  belly
+];
+const DOG_LEGS = [
+    ['..BR...BRB..', '..BW...BWB..'],
+    ['...BRBR.B...', '...BWBW.B...'],
+];
+// Tail pixels [row, col, colorKey] - wagging
+const DOG_TAIL = [
+    [[5,10,'B'],[4,11,'R'],[3,11,'R']],
+    [[6,10,'B'],[6,11,'R'],[5,11,'R']],
+];
+
+function drawPixelDog(x, y, ps, af) {
+    function dot(key, c, r) {
+        const col = DPAL[key];
+        if (col) { ctx.fillStyle = col; ctx.fillRect(x+c*ps, y+r*ps, ps, ps); }
+    }
+    function rows(arr, ro) { arr.forEach((row, r) => { for (let c = 0; c < row.length; c++) dot(row[c], c, r+ro); }); }
+    rows(DOG_BODY, 0);
+    rows(DOG_LEGS[af % 2], 10);
+    DOG_TAIL[af % 2].forEach(([r,c,k]) => dot(k, c, r));
+}
+
+// ─── Obstacle ──────────────────────────────────────────────────────────────────
+const DOG_SIZES = [
+    { ps: 3, w: 36, h: 36 },
+    { ps: 4, w: 48, h: 48 },
+];
+class Obstacle {
+    constructor(sizeIdx) {
+        const lvl = getLevel();
+        // Higher level = higher chance of big dog
+        if (sizeIdx === undefined) {
+            sizeIdx = Math.random() < Math.min(lvl * 0.12, 0.55) ? 1 : 0;
+        }
+        const s = DOG_SIZES[sizeIdx];
+        this.ps = s.ps; this.w = s.w; this.h = s.h;
+        this.x = W + 20; this.y = GROUND_Y - this.h;
+        this.af = 0; this.afTimer = 0;
+    }
+    update() {
+        this.x -= speed;
+        this.afTimer++;
+        // Faster leg animation at higher speeds
+        const rate = Math.max(9 - Math.floor(speed / 3), 4);
+        if (this.afTimer >= rate) { this.af = (this.af + 1) % 2; this.afTimer = 0; }
+    }
+    draw() { drawPixelDog(this.x, this.y, this.ps, this.af); }
+    hitbox() {
+        const m = this.ps * 2;
+        return { x: this.x + m, y: this.y + m, w: this.w - m*2, h: this.h - m*2 };
+    }
+}
+
+// ─── Pixel Cloud ───────────────────────────────────────────────────────────────
+const CLOUD_PX = [
+    '...CCCCCC...',
+    '.CCCCCCCCCC.',
+    'CCCCCCCCCCCC',
+    '.CCCCCCCCCC.',
+    '...CCCCCC...',
+];
+class Cloud {
+    constructor(rx) {
+        this.x = rx !== undefined ? rx : W + 80;
+        this.y = 14 + Math.random() * 55;
+        this.ps = Math.random() < 0.5 ? 3 : 4;
+        this.spd = 0.4 + Math.random() * 0.5;
+    }
+    update() { this.x -= this.spd; }
+    draw() {
+        const p = this.ps;
+        CLOUD_PX.forEach((row, r) => {
+            for (let c = 0; c < row.length; c++) {
+                if (row[c] === 'C') {
+                    ctx.fillStyle = '#FCFCFC';
+                    ctx.fillRect(this.x + c*p, this.y + r*p, p, p);
+                }
+            }
+        });
+    }
+}
+
+// ─── Pixel Puff ────────────────────────────────────────────────────────────────
+class Puff {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.vx = (Math.random() - 0.5) * 6;
+        this.vy = -4 - Math.random() * 4;
+        this.size = 4 + Math.floor(Math.random() * 3) * 4;
+        this.life = 1.0;
+        this.color = ['#F4932A','#FFD700','#FF6B6B','#FCFCFC','#BDDFF7'][Math.floor(Math.random()*5)];
+    }
+    update() { this.x += this.vx; this.vy += 0.3; this.y += this.vy; this.life -= 0.04; }
+    draw() {
+        const s = Math.max(2, Math.floor(this.size * this.life / 2) * 2);
+        ctx.globalAlpha = this.life;
+        ctx.fillStyle = this.color;
+        ctx.fillRect(Math.round(this.x - s/2), Math.round(this.y - s/2), s, s);
+        ctx.globalAlpha = 1;
+    }
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+function collides(a, b) {
+    return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+}
+
+function getLevel() { return Math.min(Math.floor(score / 200), 9); }
+
+function spawnObstacle() {
+    nextObsIn--;
+    if (nextObsIn <= 0) {
+        const lvl = getLevel();
+        obstacles.push(new Obstacle());
+
+        if (doubleNext) {
+            // Second dog of a pair: very short gap
+            nextObsIn = 18 + Math.floor(Math.random() * 10);
+            doubleNext = false;
+        } else {
+            // Normal gap, shrinks with level
+            const minGap = Math.max(88 - lvl * 7, 24);
+            const extra   = Math.max(55 - lvl * 4, 14);
+            nextObsIn = minGap + Math.floor(Math.random() * extra);
+            // Double-dog chance starts at level 3
+            if (lvl >= 3 && Math.random() < (lvl - 2) * 0.07) {
+                doubleNext = true;
+            }
+        }
+    }
+}
+function spawnCloud() {
+    if (clouds.length < 5 && Math.random() < 0.004) clouds.push(new Cloud());
+}
+
+// ─── Pixel box helper ──────────────────────────────────────────────────────────
+function pixelBox(x, y, w, h, bg, border) {
+    ctx.fillStyle = border;
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = bg;
+    ctx.fillRect(x+4, y+4, w-8, h-8);
+}
+
+// ─── Draw background ───────────────────────────────────────────────────────────
+function drawBG() {
+    bgOff += speed * 0.18;
+
+    // NES-style solid sky
+    ctx.fillStyle = '#5C94FC';
+    ctx.fillRect(0, 0, W, GROUND_Y);
+
+    // Far background: dark tree silhouettes (slow parallax)
+    ctx.fillStyle = '#2060B0';
+    for (let tx = -(bgOff * 0.2) % 100; tx < W + 10; tx += 100) {
+        const ox = Math.round(tx);
+        ctx.fillRect(ox,      GROUND_Y - 52, 48, 28); // canopy
+        ctx.fillRect(ox + 16, GROUND_Y - 28, 16, 28); // trunk
+    }
+
+    // Mid background: bushes (medium parallax)
+    ctx.fillStyle = '#1A9A1A';
+    for (let tx = -(bgOff * 0.4) % 80; tx < W + 10; tx += 80) {
+        const ox = Math.round(tx);
+        ctx.fillRect(ox + 4,  GROUND_Y - 20, 32, 12);
+        ctx.fillRect(ox,      GROUND_Y - 12, 40, 12);
+    }
+}
+
+// ─── Draw ground (pixel tiles) ─────────────────────────────────────────────────
+function drawGround() {
+    groundOff = (groundOff + speed) % (GP * 8);
+
+    // Bright grass top
+    ctx.fillStyle = '#00C800';
+    ctx.fillRect(0, GROUND_Y, W, GP);
+    ctx.fillStyle = '#00A800';
+    ctx.fillRect(0, GROUND_Y + GP, W, GP);
+    ctx.fillStyle = '#007800';
+    ctx.fillRect(0, GROUND_Y + GP*2, W, GP);
+
+    // Dirt
+    ctx.fillStyle = '#9C5020';
+    ctx.fillRect(0, GROUND_Y + GP*3, W, GROUND_H - GP*3);
+
+    // Scrolling dirt tiles
+    ctx.fillStyle = '#7A3C14';
+    for (let gx = -groundOff; gx < W; gx += GP*8) {
+        ctx.fillRect(Math.round(gx), GROUND_Y + GP*4, GP*4, GP*2);
+    }
+
+    // Scrolling grass highlights
+    ctx.fillStyle = '#44EE44';
+    for (let gx = (-groundOff*0.5 + 24) % (GP*14); gx < W; gx += GP*14) {
+        ctx.fillRect(Math.round(gx), GROUND_Y, GP*2, GP);
+    }
+}
+
+// ─── HUD ───────────────────────────────────────────────────────────────────────
+function drawHUD() {
+    const font = '"Press Start 2P", monospace';
+    ctx.textAlign = 'right';
+    // Shadow
+    ctx.fillStyle = '#000';
+    ctx.font = `13px ${font}`;
+    ctx.fillText('HI ' + String(hiScore).padStart(5,'0'), W-13, 29);
+    ctx.fillText(String(Math.floor(score)).padStart(5,'0'),  W-13, 51);
+    // Text
+    ctx.fillStyle = '#FCFCFC';
+    ctx.fillText('HI ' + String(hiScore).padStart(5,'0'), W-15, 27);
+    ctx.fillStyle = '#FFD700';
+    ctx.fillText(String(Math.floor(score)).padStart(5,'0'),  W-15, 49);
+
+    // Level display
+    const lvl = getLevel();
+    ctx.textAlign = 'left';
+    ctx.font = `10px ${font}`;
+    ctx.fillStyle = '#000';
+    ctx.fillText(`LV.${lvl + 1}`, 13, 27);
+    ctx.fillStyle = '#FCBA03';
+    ctx.fillText(`LV.${lvl + 1}`, 12, 26);
+
+    // Speed bar (5 dots)
+    const filled = Math.min(Math.ceil(lvl / 2), 5);
+    ctx.font = `8px ${font}`;
+    ctx.fillStyle = '#000'; ctx.fillText('*'.repeat(filled) + '-'.repeat(5-filled), 13, 43);
+    ctx.fillStyle = lvl >= 7 ? '#FF4444' : lvl >= 4 ? '#FF8C00' : '#44CC44';
+    ctx.fillText('*'.repeat(filled) + '-'.repeat(5-filled), 12, 42);
+
+    // Level-up flash
+    if (levelUpTimer > 0) {
+        const alpha = levelUpTimer > 80 ? 1 : levelUpTimer / 80;
+        ctx.globalAlpha = alpha;
+        ctx.textAlign = 'center';
+        ctx.font = `14px ${font}`;
+        ctx.fillStyle = '#000';
+        ctx.fillText(`LEVEL ${lvl}!`, W/2 + 2, 42);
+        ctx.fillStyle = '#FFD700';
+        ctx.fillText(`LEVEL ${lvl}!`, W/2, 40);
+        ctx.globalAlpha = 1;
+    }
+}
+
+// ─── Overlay screens ───────────────────────────────────────────────────────────
+function drawStartScreen() {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, W, H);
+    pixelBox(W/2-220, H/2-68, 440, 136, '#000C28', '#FCBA03');
+    const font = '"Press Start 2P", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#FCBA03';
+    ctx.font = `18px ${font}`;
+    ctx.fillText('NEKO RUNNER', W/2, H/2 - 26);
+    ctx.fillStyle = '#FCFCFC';
+    ctx.font = `8px ${font}`;
+    ctx.fillText('AVOID THE DOGS!', W/2, H/2 - 4);
+    ctx.fillStyle = '#88AACC';
+    ctx.fillText('PRESS SPACE OR TAP TO START', W/2, H/2 + 18);
+    ctx.fillText('2x JUMP AVAILABLE', W/2, H/2 + 38);
+}
+
+function drawDeadScreen() {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, W, H);
+    pixelBox(W/2-200, H/2-68, 400, 136, '#200000', '#FF3333');
+    const font = '"Press Start 2P", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#FF3333';
+    ctx.font = `18px ${font}`;
+    ctx.fillText('GAME OVER', W/2, H/2 - 26);
+    ctx.fillStyle = '#FCFCFC';
+    ctx.font = `10px ${font}`;
+    ctx.fillText('SCORE ' + String(Math.floor(score)).padStart(5,'0'), W/2, H/2 - 2);
+    if (score >= hiScore && score > 0) {
+        ctx.fillStyle = '#FFD700';
+        ctx.font = `9px ${font}`;
+        ctx.fillText('NEW RECORD!', W/2, H/2 + 20);
+    }
+    ctx.fillStyle = '#666';
+    ctx.font = `7px ${font}`;
+    ctx.fillText('PRESS SPACE OR TAP', W/2, H/2 + 42);
+}
+
+// ─── Reset ─────────────────────────────────────────────────────────────────────
+function reset() {
+    score = 0; speed = 5; frame = 0; nextObsIn = 80;
+    currentLevel = 0; levelUpTimer = 0; doubleNext = false;
+    obstacles.length = 0; puffs.length = 0;
+    cat.y = GROUND_Y - cat.h; cat.vy = 0;
+    cat.onGround = true; cat.jumps = 0; cat.animFrame = 0; cat.animTimer = 0;
+    state = 'playing';
+}
+
+// ─── Update ────────────────────────────────────────────────────────────────────
+function update() {
+    if (state !== 'playing') {
+        for (let i = puffs.length-1; i >= 0; i--) {
+            puffs[i].update();
+            if (puffs[i].life <= 0) puffs.splice(i, 1);
+        }
+        return;
+    }
+    frame++;
+    score += 0.12;
+    // Smooth, continuous speed increase (5 → 15 over ~2500 points)
+    speed = Math.min(5 + score * 0.004, 15);
+
+    // Level-up detection
+    const lvl = getLevel();
+    if (lvl > currentLevel) {
+        currentLevel = lvl;
+        levelUpTimer = 100;
+    }
+    if (levelUpTimer > 0) levelUpTimer--;
+    cat.update();
+    spawnObstacle(); spawnCloud();
+    for (let i = obstacles.length-1; i >= 0; i--) {
+        obstacles[i].update();
+        if (obstacles[i].x + obstacles[i].w < -20) obstacles.splice(i, 1);
+    }
+    for (let i = clouds.length-1; i >= 0; i--) {
+        clouds[i].update();
+        if (clouds[i].x < -80) clouds.splice(i, 1);
+    }
+    const ch = cat.hitbox();
+    for (const obs of obstacles) {
+        if (collides(ch, obs.hitbox())) {
+            for (let p = 0; p < 20; p++) puffs.push(new Puff(cat.x + cat.w/2, cat.y + cat.h/2));
+            if (score > hiScore) { hiScore = Math.floor(score); localStorage.setItem('neko_hi', hiScore); }
+            state = 'dead'; return;
+        }
+    }
+}
+
+// ─── Draw ──────────────────────────────────────────────────────────────────────
+function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawBG();
+    for (const c of clouds) c.draw();
+    drawGround();
+    for (const o of obstacles) o.draw();
+    drawNekoShocho(cat.x, cat.y, cat.animFrame, cat.onGround, state === 'dead');
+    for (const p of puffs) p.draw();
+    drawHUD();
+    if (state === 'start') drawStartScreen();
+    if (state === 'dead')  drawDeadScreen();
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+
+// ─── Input ─────────────────────────────────────────────────────────────────────
+function input() { if (state === 'start' || state === 'dead') reset(); else cat.jump(); }
+document.addEventListener('keydown', e => { if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); input(); } });
+canvas.addEventListener('click', input);
+canvas.addEventListener('touchstart', e => { e.preventDefault(); input(); }, { passive: false });
+
+// ─── Init ──────────────────────────────────────────────────────────────────────
+for (let i = 0; i < 4; i++) clouds.push(new Cloud(Math.random() * W));
+loop();
+</script>
+</body>
+</html>
